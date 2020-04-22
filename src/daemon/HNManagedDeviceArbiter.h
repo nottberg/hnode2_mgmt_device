@@ -30,10 +30,15 @@ class HNMDARecord
         HNMDR_DISC_STATE_T   discoveryState;
         HNMDR_OWNER_STATE_T  ownershipState;
 
+        std::string discID;
         HNodeID     hnodeID;
+        std::string devType;
+        std::string devVersion;
         std::string name;
-        std::string baseURL;
-        std::string version;
+
+        std::string baseIPv4URL;
+        std::string baseIPv6URL;
+        std::string baseSelfURL;
 
     public:
         HNMDARecord();
@@ -42,6 +47,16 @@ class HNMDARecord
         void setDiscoveryState( HNMDR_DISC_STATE_T value );
         void setOwnershipState( HNMDR_OWNER_STATE_T value );
 
+        void setDiscoveryID( std::string value );
+        void setDeviceType( std::string value );
+        void setDeviceVersion( std::string value );
+        void setHNodeIDFromStr( std::string value );
+        void setName( std::string value );
+
+        void setBaseIPv4URL( std::string value );
+        void setBaseIPv6URL( std::string value );
+        void setBaseSelfURL( std::string value );
+      
         HNMDR_DISC_STATE_T  getDiscoveryState();
         HNMDR_OWNER_STATE_T getOwnershipState();
 
