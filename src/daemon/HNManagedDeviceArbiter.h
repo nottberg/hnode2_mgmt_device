@@ -8,12 +8,14 @@
 
 typedef enum HNManagedDeviceRecordDiscoveryStateEnum
 {
-    HNMDR_DISC_STATE_NOTSET
+    HNMDR_DISC_STATE_NOTSET,
+    HNMDR_DISC_STATE_NEW
 }HNMDR_DISC_STATE_T;
 
 typedef enum HNManagedDeviceRecordOwnerStateEnum
 {
-    HNMDR_OWNER_STATE_NOTSET
+    HNMDR_OWNER_STATE_NOTSET,
+    HNMDR_OWNER_STATE_UNKNOWN,
 }HNMDR_OWNER_STATE_T;
 
 typedef enum HNManagedDeviceListResultEnum
@@ -22,7 +24,7 @@ typedef enum HNManagedDeviceListResultEnum
     HNMDL_RESULT_FAILURE
 }HNMDL_RESULT_T;
 
-class HNManagedDeviceRecord
+class HNMDARecord
 {
     private:
         HNMDR_DISC_STATE_T   discoveryState;
@@ -34,9 +36,16 @@ class HNManagedDeviceRecord
         std::string version;
 
     public:
-        HNManagedDeviceRecord();
-       ~HNManagedDeviceRecord();
+        HNMDARecord();
+       ~HNMDARecord();
 
+        void setDiscoveryState( HNMDR_DISC_STATE_T value );
+        void setOwnershipState( HNMDR_OWNER_STATE_T value );
+
+        HNMDR_DISC_STATE_T  getDiscoveryState();
+        HNMDR_OWNER_STATE_T getOwnershipState();
+
+        std::string getCRC32ID();
 };
 
 class HNManagedDeviceArbiter
@@ -44,12 +53,14 @@ class HNManagedDeviceArbiter
     private:
 
        // A map of known hnode2 devices
-       std::map< std::string, HNManagedDeviceRecord > mdrMap;
+       std::map< std::string, HNMDARecord > mdrMap;
 
     public:
         HNManagedDeviceArbiter();
        ~HNManagedDeviceArbiter();
 
+        HNMDL_RESULT_T notifyDiscoverAdd( HNMDARecord &record );
+        HNMDL_RESULT_T notifyDiscoverRemove( HNMDARecord &record );
 };
 
 #endif // _HN_MANAGED_DEVICE_ARBITER_H_
