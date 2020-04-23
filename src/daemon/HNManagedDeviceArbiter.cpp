@@ -67,10 +67,32 @@ HNMDARecord::getDiscoveryState()
     return discoveryState;
 }
 
+std::string
+HNMDARecord::getDiscoveryStateStr()
+{
+    if( HNMDR_DISC_STATE_NEW == discoveryState )
+        return "HNMDR_DISC_STATE_NEW";
+    else if( HNMDR_DISC_STATE_NOTSET == discoveryState )
+        return "HNMDR_DISC_STATE_NOTSET";
+
+    return "ERROR";
+}
+
 HNMDR_OWNER_STATE_T 
 HNMDARecord::getOwnershipState()
 {
     return ownershipState;
+}
+
+std::string
+HNMDARecord::getOwnershipStateStr()
+{
+    if( HNMDR_OWNER_STATE_UNKNOWN == ownershipState )
+        return "HNMDR_OWNER_STATE_UNKNOWN";
+    else if( HNMDR_OWNER_STATE_NOTSET == ownershipState )
+        return "HNMDR_OWNER_STATE_NOTSET";
+
+    return "ERROR";
 }
 
 void 
@@ -180,8 +202,14 @@ HNMDARecord::getCRC32ID()
 void 
 HNMDARecord::debugPrint( uint offset )
 {
-    printf( "%*.*s %s\n", offset, offset, " ", hnodeID.getCRC32AsHexStr().c_str() );
-
+    printf( "%*.*s%s  %s  %s\n", offset, offset, " ", hnodeID.getCRC32AsHexStr().c_str(), getDiscoveryStateStr().c_str(), getOwnershipStateStr().c_str() );
+ 
+    offset += 2;
+    printf( "%*.*sname: %s\n", offset, offset, " ", getName().c_str() );
+    printf( "%*.*shnodeID: %s\n", offset, offset, " ", getHNodeIDStr().c_str() );
+    printf( "%*.*sdeviceType: %s (version: %s)\n", offset, offset, " ", getDeviceType().c_str(), getDeviceVersion().c_str() );
+    printf( "%*.*sdiscID: %s\n", offset, offset, " ", getDiscoveryID().c_str() );
+ 
 #if 0
         std::string discID;
         HNodeID     hnodeID;

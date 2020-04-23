@@ -61,7 +61,10 @@ class HNMDARecord
         void setBaseSelfURL( std::string value );
       
         HNMDR_DISC_STATE_T  getDiscoveryState();
+        std::string getDiscoveryStateStr();
+
         HNMDR_OWNER_STATE_T getOwnershipState();
+        std::string getOwnershipStateStr();
 
         std::string getDiscoveryID();
         std::string getDeviceType();
