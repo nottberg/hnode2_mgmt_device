@@ -12,6 +12,8 @@
 
 #include "hnode2/HNAvahiBrowser.h"
 
+#include "HNManagedDeviceArbiter.h"
+
 #define MAXEVENTS  8
 
 typedef enum HNManagementDeviceResultEnum
@@ -30,6 +32,8 @@ class HNManagementDevice : public Poco::Util::ServerApplication
         std::string _instance; 
 
         std::string instanceName;
+
+        HNManagedDeviceArbiter arbiter;
 
         bool quit;
 

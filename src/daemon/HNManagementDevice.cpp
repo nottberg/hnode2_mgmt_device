@@ -132,6 +132,9 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     // Start the HNode Device
     hnDevice.start();
 
+    // Start the Managed Device Arbiter
+    arbiter.start();
+
     // Start the AvahiBrowser component
     avBrowser.start();
 
@@ -202,6 +205,35 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                     std::cout << "=== Discover Event ===" << std::endl;
                     event->debugPrint();
 
+                    switch( event->getEventType() )
+                    {
+                        case HNAB_EVTYPE_ADD:
+                        {
+                            HNMDARecord notifyRec;
+
+                            notifyRec.setDiscoveryID( event->getName() );
+                            notifyRec.setDeviceType( event->getTxtValue( "devType" ) );
+                            notifyRec.setHNodeIDFromStr( event->getTxtValue( "hnodeID" ) );
+                            notifyRec.setName( event->getTxtValue( "name" ) );
+
+                            //void setBaseIPv4URL( std::string value );
+                            //void setBaseIPv6URL( std::string value );
+                            //void setBaseSelfURL( std::string value );
+
+                            HNMDL_RESULT_T result = arbiter.notifyDiscoverAdd( notifyRec );
+                            if( result != HNMDL_RESULT_SUCCESS )
+                            {
+                                // Note error
+                            }
+                        }
+                        break;
+
+                        case HNAB_EVTYPE_REMOVE:
+                        break;
+                    }
+
+                    arbiter.debugPrint();
+
                     avBrowser.getEventQueue().releaseRecord( event );
                 }
             }
@@ -223,6 +255,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     }
 
     avBrowser.shutdown();
+    arbiter.shutdown();
     //hnDevice.shutdown();
 
     waitForTerminationRequest();
