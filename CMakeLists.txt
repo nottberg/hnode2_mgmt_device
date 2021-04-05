@@ -2,7 +2,7 @@ CMAKE_MINIMUM_REQUIRED( VERSION 2.8 )
 PROJECT( hnode2-management-device ) 
 
 SET( MAJOR_VERSION 2 )
-SET( MINOR_VERSION 0 )
+SET( MINOR_VERSION 1 )
 SET( PATCH_VERSION 0 )
 SET( RELEASE_VERSION 0 )
 
@@ -22,6 +22,7 @@ ADD_DEFINITIONS( -DVERSION=${VERSION} )
 
 SET( HNMGMTD_SRC
      ${CMAKE_SOURCE_DIR}/src/daemon/hnmgmtd.cpp
+     ${CMAKE_SOURCE_DIR}/src/daemon/HNSCGISink.cpp
      ${CMAKE_SOURCE_DIR}/src/daemon/HNManagementDevice.cpp
      ${CMAKE_SOURCE_DIR}/src/daemon/HNManagedDeviceArbiter.cpp
 )

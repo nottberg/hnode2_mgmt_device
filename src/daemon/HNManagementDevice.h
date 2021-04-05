@@ -1,8 +1,6 @@
 #ifndef __HN_MANAGEMENT_DEVICE_H__
 #define __HN_MANAGEMENT_DEVICE_H__
 
-#include <sys/epoll.h>
-
 #include <string>
 #include <vector>
 #include <set>
@@ -12,6 +10,7 @@
 
 #include "hnode2/HNAvahiBrowser.h"
 
+#include "HNSCGISink.h"
 #include "HNManagedDeviceArbiter.h"
 
 #define MAXEVENTS  8
@@ -33,28 +32,20 @@ class HNManagementDevice : public Poco::Util::ServerApplication
 
         std::string instanceName;
 
-        HNManagedDeviceArbiter arbiter;
-
-        bool quit;
-
         int epollFD;
-        int signalFD; 
-        int acceptFD;
     
         struct epoll_event event;
         struct epoll_event *events;
 
-        std::set< int > clientSet;
+        HNManagedDeviceArbiter arbiter;
+        HNSCGISink             reqsink;
+        
+        bool quit;
 
         void displayHelp();
 
         HNMD_RESULT_T addSocketToEPoll( int sfd );
         HNMD_RESULT_T removeSocketFromEPoll( int sfd );
-        HNMD_RESULT_T addSignalSocket( int sfd );
-        HNMD_RESULT_T openListenerSocket( std::string deviceName, std::string instanceName );
-        HNMD_RESULT_T processNewClientConnections();
-        HNMD_RESULT_T closeClientConnection( int clientFD );
-        HNMD_RESULT_T processClientRequest( int cfd );
 
     protected:
         void defineOptions( Poco::Util::OptionSet& options );
