@@ -18,6 +18,605 @@
 
 #define MAXEVENTS  8
 
+HNSCGIChunk::HNSCGIChunk()
+{        
+    m_startIdx = 0;
+    m_endIdx   = 0;
+        
+    m_length = 0;
+}
+
+HNSCGIChunk::~HNSCGIChunk()
+{
+
+}
+
+uint
+HNSCGIChunk::getInsertPos( uint8_t **bufPtr )
+{
+    *bufPtr = &m_data[m_endIdx];
+    return ( sizeof(m_data) - m_length );
+}
+
+bool 
+HNSCGIChunk::hasSpace()
+{
+    return ( m_length < sizeof(m_data) ) ? true : false; 
+}
+
+bool 
+HNSCGIChunk::isConsumed()
+{
+    return false; 
+}
+
+HNSS_RESULT_T 
+HNSCGIChunk::recvData( int fd )
+{
+    uint     availLen;
+    uint8_t *bufPtr;
+    
+    availLen = getInsertPos( &bufPtr );
+    
+    printf( "HNSCGIChunk::recvData - availLen: %u\n", availLen );
+    
+    if( availLen == 0 )
+        return HNSS_RESULT_RCV_CONT;
+        
+    ssize_t bytesRead = recv( fd, bufPtr, availLen, 0 );
+ 
+    printf( "HNSCGIChunk::recvData - bytesRead: %lu\n", bytesRead );
+   
+    if( bytesRead == 0 )
+        return HNSS_RESULT_RCV_DONE;
+    else if( bytesRead < 0 )
+        return HNSS_RESULT_RCV_ERR;
+    
+    // Update the data bounds.
+    m_length  += bytesRead;
+    m_endIdx += bytesRead;
+    
+    if( hasSpace() == false )
+        return HNSS_RESULT_RCV_CONT;
+        
+    return HNSS_RESULT_RCV_DONE;
+}
+
+HNSS_RESULT_T
+HNSCGIChunk::peekNextByte( uint8_t &nxtChar )
+{
+    if( m_startIdx >= m_endIdx )
+        return HNSS_RESULT_FAILURE;
+        
+    nxtChar = m_data[ m_startIdx ];
+    return HNSS_RESULT_SUCCESS;
+}
+
+void
+HNSCGIChunk::consumeByte()
+{
+    consumeBytes(1);     
+}
+
+void
+HNSCGIChunk::consumeBytes( uint byteCnt )
+{
+    m_startIdx += byteCnt;
+    
+    if( m_startIdx > sizeof( m_data ) )
+        m_startIdx -= sizeof( m_data );
+}
+
+HNSS_RESULT_T
+HNSCGIChunk::extractNetStrStart( std::string &lenStr )
+{   
+    // Check if there is any data available, 
+    // if not wait for some more
+    if( m_startIdx == m_endIdx )
+        return HNSS_RESULT_PARSE_WAIT;
+        
+    // Look for only numeric characters with a delimiting ':' at the end,
+    // if found turn the string into an uint and consume the characters.
+    //char numBuf[32];
+    //char *numIns = numBuf;
+    uint curIdx;
+    uint bytesProcessed = 0;
+    
+    bool hdrComplete = false;
+  
+    printf( "extractNetStrStart - m_startIdx: %u, m_endIdx: %u\n", m_startIdx, m_endIdx );
+    
+    curIdx = m_startIdx;
+    while( curIdx <= m_endIdx )
+    {
+        uint8_t curByte = m_data[ curIdx ];
+            
+        printf( "extractNetStrStart - curIdx: %u, byte: '%c'\n", curIdx, curByte );
+        
+        bytesProcessed += 1;
+            
+        if( isspace( curByte ) == true )
+        {
+            printf( "isspace\n");
+            curIdx += 1;
+            continue;
+        }
+        else if( isdigit( curByte ) == true )
+        {
+            printf( "isdigit\n");
+            //*numIns = curByte;
+            //numIns++;
+            lenStr.push_back( curByte );
+            curIdx += 1;
+            continue;
+        }
+        else if( curByte == ':' )
+        {
+            hdrComplete = true;
+            break;
+        }
+        else
+            return HNSS_RESULT_PARSE_ERR;
+            
+        // Check next character
+        curIdx += 1;
+    }
+     
+    printf( "extractNetStrStart - bytesConsumed: %u\n", bytesProcessed );
+
+    consumeBytes( bytesProcessed );
+       
+    return ( hdrComplete == false ) ? HNSS_RESULT_PARSE_WAIT : HNSS_RESULT_PARSE_COMPLETE;
+}
+
+HNSS_RESULT_T
+HNSCGIChunk::extractNullStr( std::string &nullStr )
+{   
+    // Check if there is any data available, 
+    // if not wait for some more
+    if( m_startIdx == m_endIdx )
+        return HNSS_RESULT_PARSE_WAIT;
+        
+    // Transfer over all characters until a delimiting null is seen.
+    uint curIdx;
+    uint bytesProcessed = 0;
+    
+    bool strComplete = false;
+  
+    //printf( "extractNullStr - m_startIdx: %u, m_endIdx: %u\n", m_startIdx, m_endIdx );
+    
+    curIdx = m_startIdx;
+    while( curIdx <= m_endIdx )
+    {
+        uint8_t curByte = m_data[ curIdx ];
+            
+        //printf( "extractNullStr - curIdx: %u, byte: '%c'\n", curIdx, curByte );
+        
+        bytesProcessed += 1;
+            
+        if( curByte == '\0' )
+        {
+            strComplete = true;
+            curIdx += 1;
+            break;
+        }
+
+        // Record this byte and move to next        
+        nullStr.push_back( curByte );
+        curIdx += 1;
+    }
+     
+    //printf( "extractNullStr - bytesConsumed: %u\n", bytesProcessed );
+     
+    consumeBytes( bytesProcessed );
+       
+    return ( strComplete == false ) ? HNSS_RESULT_PARSE_WAIT : HNSS_RESULT_PARSE_COMPLETE;
+}
+
+HNSCGIChunkQueue::HNSCGIChunkQueue()
+{
+
+}
+
+HNSCGIChunkQueue::~HNSCGIChunkQueue()
+{
+
+}
+       
+HNSS_RESULT_T 
+HNSCGIChunkQueue::recvData( int fd )
+{
+    // Get iterator to current rx element
+    std::list< HNSCGIChunk* >::iterator it = m_chunkList.begin();
+    
+    // If there is no current rx element, allocate one.
+    // If the current rx-element is full, allocate another one.
+    if( it == m_chunkList.end() )
+    {
+        HNSCGIChunk *chunkPtr = new HNSCGIChunk;
+        m_chunkList.push_front( chunkPtr );
+        it = m_chunkList.begin();
+    }
+    else if( (*it)->hasSpace() == false )
+    {
+        HNSCGIChunk *chunkPtr = new HNSCGIChunk;
+        m_chunkList.push_front( chunkPtr );
+        it = m_chunkList.begin();
+    }
+    
+    // Receive all the data that we can
+    HNSS_RESULT_T result = HNSS_RESULT_RCV_CONT;
+    while( result == HNSS_RESULT_RCV_CONT )
+    {
+        result = (*it)->recvData( fd );
+        
+        switch( result )
+        {
+            case HNSS_RESULT_RCV_DONE:
+            break;
+            
+            case HNSS_RESULT_RCV_CONT:
+            {
+                // Allocate some additional storage space
+                HNSCGIChunk *chunkPtr = new HNSCGIChunk;
+                m_chunkList.push_front( chunkPtr );
+                it = m_chunkList.begin();                
+            }
+            break;
+            
+            case HNSS_RESULT_RCV_ERR:
+                return HNSS_RESULT_FAILURE;
+            break;
+        }
+    }
+    
+    return HNSS_RESULT_SUCCESS;
+}
+
+void 
+HNSCGIChunkQueue::resetParseState()
+{
+    m_partialStr.clear();
+}
+
+HNSS_RESULT_T 
+HNSCGIChunkQueue::parseNetStrStart( uint &headerLength )
+{
+   HNSS_RESULT_T result = HNSS_RESULT_PARSE_WAIT;
+   
+   // Default return length
+   headerLength = 0;
+   
+   // Start parsing through the available data
+   while( m_chunkList.empty() == false )
+   {
+       HNSCGIChunk *curChunk = m_chunkList.back();
+
+       // Check in the current chunk of data.
+       result = curChunk->extractNetStrStart( m_partialStr );
+       
+       // Determine if the current chunk has been consumed, if so remove it and move to the next
+       if( curChunk->isConsumed() == true )
+       {
+           m_chunkList.pop_back();
+       }
+       
+       // Check on the result, and next steps
+       switch( result )
+       {
+           // Parsing complete and successful
+           case HNSS_RESULT_PARSE_COMPLETE:
+           {
+               // Convert number string to an integer
+               headerLength = strtol( m_partialStr.c_str(), NULL, 0 );
+        
+               return HNSS_RESULT_PARSE_COMPLETE;
+           }
+           break;
+           
+           // Found part of the length, check next chunk.
+           case HNSS_RESULT_PARSE_PARTIAL:
+           break;
+           
+           // Need to wait for more data to be recieved
+           // or we encountered an error.
+           case HNSS_RESULT_PARSE_WAIT:
+           case HNSS_RESULT_PARSE_ERR:
+               return result;
+           break;
+       }
+   }
+   
+   // Got here by finding a partial match,
+   // but then running out of data. 
+   // Signal we want to wait for more data.
+   return HNSS_RESULT_PARSE_WAIT;
+}
+
+HNSS_RESULT_T 
+HNSCGIChunkQueue::parseNullStr( std::string &name )
+{
+   HNSS_RESULT_T result = HNSS_RESULT_PARSE_WAIT;
+    
+   printf( "parseNullStr - list: %lu\n", m_chunkList.size() );
+   
+   // Start parsing through the available data
+   while( m_chunkList.empty() == false )
+   {
+       HNSCGIChunk *curChunk = m_chunkList.back();
+
+       // Check in the current chunk of data.
+       result = curChunk->extractNullStr( m_partialStr );
+       
+       // Determine if the current chunk has been consumed, if so remove it and move to the next
+       if( curChunk->isConsumed() == true )
+       {
+           m_chunkList.pop_back();
+       }
+       
+       // Check on the result, and next steps
+       switch( result )
+       {
+           // Parsing complete and successful
+           case HNSS_RESULT_PARSE_COMPLETE:
+               name = m_partialStr;
+               return HNSS_RESULT_PARSE_COMPLETE;
+           break;
+           
+           // Found part of the length, check next chunk.
+           case HNSS_RESULT_PARSE_PARTIAL:
+           break;
+           
+           // Need to wait for more data to be recieved
+           // or we encountered an error.
+           case HNSS_RESULT_PARSE_WAIT:
+           case HNSS_RESULT_PARSE_ERR:
+               return result;
+           break;
+       }
+   }
+   
+   // Got here by finding a partial match,
+   // but then running out of data. 
+   // Signal we want to wait for more data.
+   return HNSS_RESULT_PARSE_WAIT;
+}
+
+HNSCGIReqRsp::HNSCGIReqRsp()
+{
+
+}
+
+HNSCGIReqRsp::~HNSCGIReqRsp()
+{
+
+}
+
+void
+HNSCGIReqRsp::addHdrPair( std::string name, std::string value )
+{
+    printf( "addHdrPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
+    
+    m_paramMap.insert( std::pair<std::string, std::string>(name, value) );
+}
+
+HNSCGISinkClient::HNSCGISinkClient( HNSCGISink *parent )
+{
+    m_parent  = parent;
+    m_rxState = HNSCGI_SS_IDLE;
+    
+    m_curReq     = NULL;
+}
+
+HNSCGISinkClient::~HNSCGISinkClient()
+{
+
+}       
+
+void
+HNSCGISinkClient::setRxParseState( HNSC_SS_T newState )
+{
+    printf( "setRxParseState - newState: %u\n", newState );
+
+    m_rxQueue.resetParseState();
+    m_rxState = newState;
+}
+
+
+HNSS_RESULT_T
+HNSCGISinkClient::rxNextParse()
+{
+    HNSS_RESULT_T result = HNSS_RESULT_PARSE_ERR;
+
+    printf( "rxNextParse - %u\n", m_rxState );
+    
+    // Handle the data
+    switch( m_rxState )
+    {
+        // Start of parsing a new request
+        case HNSCGI_SS_IDLE:
+        {
+            m_curReq = new HNSCGIReqRsp;
+            
+            m_expHdrLen = 0;
+            m_rcvHdrLen = 0;
+                        
+            setRxParseState( HNSCGI_SS_HDR_NSTR_LEN );
+            return HNSS_RESULT_PARSE_CONTINUE;             
+        }
+        break;
+    
+        // Waiting for start of the header netstring
+        case HNSCGI_SS_HDR_NSTR_LEN:
+        {   
+            result = m_rxQueue.parseNetStrStart( m_expHdrLen );
+            
+            switch( result )
+            {
+                case HNSS_RESULT_PARSE_COMPLETE:
+                    printf( "HDR_NSTR Len: %u\n", m_expHdrLen );
+                    
+                    m_curHdrName.clear();
+                    m_curHdrValue.clear();
+
+                    setRxParseState( HNSCGI_SS_HDR_DATA_NAME );
+                    return HNSS_RESULT_PARSE_CONTINUE; 
+                break;
+                
+                case HNSS_RESULT_PARSE_WAIT:
+                break;
+                
+                case HNSS_RESULT_PARSE_ERR:
+                    setRxParseState( HNSCGI_SS_ERROR ); 
+                    return HNSS_RESULT_PARSE_ERR;
+                break;
+            }            
+        }
+        break;
+        
+        // Parsing header data looking for next name
+        case HNSCGI_SS_HDR_DATA_NAME:
+        {   
+            result = m_rxQueue.parseNullStr( m_curHdrName );
+    
+            switch( result )
+            {
+                case HNSS_RESULT_PARSE_COMPLETE:
+                    printf( "Name Null Str(%lu): %*.*s\n", m_curHdrName.size(), (int)m_curHdrName.size(), (int)m_curHdrName.size(), m_curHdrName.c_str() );
+                    
+                    m_rcvHdrLen += ( m_curHdrName.size() + 1 );
+               
+                    printf( "Name exp: %u,  rcv: %u\n", m_expHdrLen, m_rcvHdrLen );
+     
+                    if( m_rcvHdrLen >= m_expHdrLen )
+                    {
+                        printf( "ERROR: Malformed request header\n" );
+                        setRxParseState( HNSCGI_SS_ERROR );
+                        return HNSS_RESULT_PARSE_ERR; 
+                    }
+                    
+                    setRxParseState( HNSCGI_SS_HDR_DATA_VALUE );
+                    return HNSS_RESULT_PARSE_CONTINUE; 
+                break;
+                
+                case HNSS_RESULT_PARSE_WAIT:
+                break;
+                
+                case HNSS_RESULT_PARSE_ERR:
+                    setRxParseState( HNSCGI_SS_ERROR ); 
+                    return HNSS_RESULT_PARSE_ERR;
+                break;
+            }            
+            
+        }
+        break;
+        
+        // Parsing header data looking for next value
+        case HNSCGI_SS_HDR_DATA_VALUE:
+        {
+            result = m_rxQueue.parseNullStr( m_curHdrValue );
+    
+            switch( result )
+            {
+                case HNSS_RESULT_PARSE_COMPLETE:
+                    printf( "Value Null Str(%lu): %*.*s\n", m_curHdrValue.size(), (int)m_curHdrValue.size(), (int)m_curHdrValue.size(), m_curHdrValue.c_str() );
+                    
+                    m_curReq->addHdrPair( m_curHdrName, m_curHdrValue );
+                                        
+                    m_rcvHdrLen += ( m_curHdrValue.size() + 1 );
+                   
+                    printf( "Value exp: %u,  rcv: %u\n", m_expHdrLen, m_rcvHdrLen );
+                    
+                    if( m_rcvHdrLen > m_expHdrLen )
+                    {
+                        printf( "ERROR: Malformed request header\n" );
+                        setRxParseState( HNSCGI_SS_ERROR );
+                        return HNSS_RESULT_PARSE_ERR; 
+                    }
+                    else if( m_rcvHdrLen == m_expHdrLen )
+                    {
+                        setRxParseState( HNSCGI_SS_HDR_NSTR_COMMA );
+                        return HNSS_RESULT_PARSE_CONTINUE; 
+                    }
+                    
+                    m_curHdrName.clear();
+                    m_curHdrValue.clear();
+                    
+                    setRxParseState( HNSCGI_SS_HDR_DATA_NAME );
+                    return HNSS_RESULT_PARSE_CONTINUE; 
+                break;
+                
+                case HNSS_RESULT_PARSE_WAIT:
+                break;
+                
+                case HNSS_RESULT_PARSE_ERR:
+                    setRxParseState( HNSCGI_SS_ERROR ); 
+                    return HNSS_RESULT_PARSE_ERR;
+                break;
+            }            
+        }
+        break;
+        
+        // Find and strip off the header netstring trailing comma
+        case HNSCGI_SS_HDR_NSTR_COMMA:       
+        break;
+        
+        // Waiting for the Content Length of payload
+        case HNSCGI_SS_PAYLOAD:       
+        break;
+        
+        // Request RX is complete 
+        case HNSCGI_SS_DONE:          
+        break;
+        
+        // An error occurred during processing.
+        case HNSCGI_SS_ERROR:          
+        break;
+
+    }
+
+}
+
+HNSS_RESULT_T 
+HNSCGISinkClient::recvData( int fd )
+{
+    HNSS_RESULT_T result;
+    
+    // Allocate a chunk if needed
+    //if( m_curRxChunk == NULL )
+    //    m_curRxChunk = new HNSCGIChunk;
+        
+    // Pull in some data from the socket
+    result = m_rxQueue.recvData( fd );
+    
+    if( result != HNSS_RESULT_SUCCESS )
+    {
+        // No further progress can be made currently.
+        return result;
+    }
+    
+    // Attempt parsing until we run out of data,
+    // find a complete request, or encounter an error.
+    result = HNSS_RESULT_PARSE_CONTINUE;
+    while( result == HNSS_RESULT_PARSE_CONTINUE )
+    {
+        result = rxNextParse();    
+    }
+    
+    if( result == HNSS_RESULT_PARSE_ERR )
+    {
+        printf( "ERROR: Rx parsing\n");
+        return HNSS_RESULT_FAILURE;
+    }
+    
+    if( result == HNSS_RESULT_PARSE_WAIT )
+    {
+        printf( "Wait for more data\n");    
+    }
+    
+    return HNSS_RESULT_SUCCESS;
+}
+
 // Helper class for running HNSCGISink  
 // proxy loop as an independent thread
 class HNSCGIRunner : public Poco::Runnable
@@ -301,6 +900,10 @@ HNSCGISink::openSCGISocket()
     sprintf( str, "/tmp/hnode2-scgi-%s.sock", m_instanceName.c_str() );
     strncpy( &addr.sun_path[0], str, strlen(str) );
 
+    // Since the socket is bound to a fs path, try a unlink first to clean up any leftovers.
+    unlink( str );
+    
+    // Attempt to create the new unix socket.
     m_acceptFD = socket( AF_UNIX, SOCK_STREAM, 0 );
     if( m_acceptFD == -1 )
     {
@@ -308,12 +911,14 @@ HNSCGISink::openSCGISocket()
         return HNSS_RESULT_FAILURE;
     }
 
+    // Bind it to the path in the filesystem
     if( bind( m_acceptFD, (struct sockaddr *) &addr, sizeof( sa_family_t ) + strlen( str ) + 1 ) == -1 )
     {
         syslog( LOG_ERR, "Failed to bind socket to @%s (%s).", str, strerror(errno) );
         return HNSS_RESULT_FAILURE;
     }
 
+    // Accept connections.
     if( listen( m_acceptFD, 4 ) == -1 )
     {
         syslog( LOG_ERR, "Failed to listen on socket for @%s (%s).", str, strerror(errno) );
@@ -355,7 +960,8 @@ HNSCGISink::processNewClientConnections( )
 
         syslog( LOG_ERR, "Adding client - sfd: %d", infd );
 
-        m_clientSet.insert( infd );
+        HNSCGISinkClient client( this );
+        m_clientMap.insert( std::pair< int, HNSCGISinkClient >( infd, client ) );
 
         addSocketToEPoll( infd );
     }
@@ -367,7 +973,7 @@ HNSCGISink::processNewClientConnections( )
 HNSS_RESULT_T
 HNSCGISink::closeClientConnection( int clientFD )
 {
-    m_clientSet.erase( clientFD );
+    m_clientMap.erase( clientFD );
 
     removeSocketFromEPoll( clientFD );
 
@@ -381,7 +987,26 @@ HNSCGISink::closeClientConnection( int clientFD )
 HNSS_RESULT_T
 HNSCGISink::processClientRequest( int cfd )
 {
-    syslog( LOG_ERR, "Process client request - sfd: %d", cfd );
+    syslog( LOG_ERR, "Process client data - sfd: %d", cfd );
+    
+    // Find the client record
+    std::map< int, HNSCGISinkClient >::iterator it = m_clientMap.find( cfd );
+    if( it == m_clientMap.end() )
+    {
+        syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", cfd );
+        return HNSS_RESULT_FAILURE;
+    }
+    
+    // Attempt to receive data for current request
+    if( it->second.recvData( cfd ) == HNSS_RESULT_FAILURE )
+    {
+        syslog( LOG_ERR, "ERROR: Failed while receiving data - sfd: %d", cfd );
+        return HNSS_RESULT_FAILURE;
+    }
+    
+    // Check if action should be taken for any requests
+    
+    
     
 #if 0
     // One of the clients has sent us a message.

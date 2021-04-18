@@ -5,28 +5,151 @@
 
 #include <string>
 #include <map>
-#include <set>
+#include <list>
 
 #include "hnode2/HNodeID.h"
 
 // Forward declaration
 class HNSCGIRunner;
+class HNSCGISink;
 
 typedef enum HNSCGISinkResultEnum
 {
     HNSS_RESULT_SUCCESS,
-    HNSS_RESULT_FAILURE
+    HNSS_RESULT_FAILURE,
+    HNSS_RESULT_PARSE_PARTIAL,
+    HNSS_RESULT_PARSE_COMPLETE,
+    HNSS_RESULT_PARSE_WAIT,
+    HNSS_RESULT_PARSE_CONTINUE,
+    HNSS_RESULT_PARSE_ERR,
+    HNSS_RESULT_RCV_DONE,
+    HNSS_RESULT_RCV_CONT,
+    HNSS_RESULT_RCV_ERR
 }HNSS_RESULT_T;
+
+class HNSCGIChunk
+{
+    private:
+        // Storage for some data
+        uint8_t  m_data[4096];
+        
+        // Start and end index
+        uint m_startIdx;
+        uint m_endIdx;
+
+        // Current point where parsing is occuring.
+        uint m_parseIdx;
+        
+        // How much is used
+        uint m_length;
+
+        uint getInsertPos( uint8_t **bufPtr );
+        
+    public:
+        HNSCGIChunk();
+       ~HNSCGIChunk();
+    
+        bool isConsumed();       
+        bool hasSpace();
+       
+        HNSS_RESULT_T recvData( int fd );
+        
+        HNSS_RESULT_T peekNextByte( uint8_t &nxtChar );
+        
+        void consumeByte();
+        void consumeBytes( uint byteCnt );
+        
+        HNSS_RESULT_T extractNetStrStart( std::string &lenStr );
+        HNSS_RESULT_T extractNullStr( std::string &nullStr );
+};
+    
+class HNSCGIChunkQueue
+{
+    private:
+        std::list< HNSCGIChunk* > m_chunkList;
+    
+        std::string m_partialStr;
+        
+    public:
+        HNSCGIChunkQueue();
+       ~HNSCGIChunkQueue();
+       
+        HNSS_RESULT_T recvData( int fd );
+
+        void resetParseState();
+        
+        HNSS_RESULT_T parseNetStrStart( uint &headerLength );
+
+        HNSS_RESULT_T parseNullStr( std::string &name );
+};
+
+class HNSCGIReqRsp
+{
+    private:
+        // 
+        uint32_t m_contentLength;
+        
+        // 
+        std::map< std::string, std::string > m_paramMap;
+        
+    public:
+        HNSCGIReqRsp();
+       ~HNSCGIReqRsp();
+       
+        void addHdrPair( std::string name, std::string value );
+};
+
+typedef enum HNSCGISinkClientStreamState
+{
+    HNSCGI_SS_IDLE,           // In between requests.
+    HNSCGI_SS_HDR_NSTR_LEN,   // Waiting for start of the header netstring
+    HNSCGI_SS_HDR_DATA_NAME,  // Waiting for the next header name to be recieved
+    HNSCGI_SS_HDR_DATA_VALUE, // Waiting for the next header value to be recieved
+    HNSCGI_SS_HDR_NSTR_COMMA, // Waiting for header netstring trailing comma
+    HNSCGI_SS_PAYLOAD,        // Waiting for the Content Length of payload
+    HNSCGI_SS_DONE,           // Request RX is complete 
+    HNSCGI_SS_ERROR           // An error occurred during processing.
+}HNSC_SS_T;
+
+class HNSCGISinkClient
+{
+        HNSCGISink        *m_parent;
+
+        HNSCGIChunkQueue   m_rxQueue;
+        HNSCGIReqRsp      *m_curReq;
+        
+        //std::list< HNSCGIReqRsp* > m_rrQueue;
+        
+        HNSC_SS_T  m_rxState;
+        
+        uint m_expHdrLen;
+        uint m_rcvHdrLen;
+        
+        std::string m_curHdrName;
+        std::string m_curHdrValue;
+        
+        void setRxParseState( HNSC_SS_T newState );
+        HNSS_RESULT_T rxNextParse();
+        
+    public:
+        HNSCGISinkClient( HNSCGISink *parent );
+       ~HNSCGISinkClient();
+       
+        HNSS_RESULT_T recvData( int fd );
+        
+};
 
 class HNSCGISink
 {
 
     private:
-
-        // A map of known hnode2 devices
-        //std::map< std::string, HNMDARecord > mdrMap;
-
+        // The instance name for this daemon
         std::string m_instanceName;
+
+        // A map of reqrsp objects
+        
+        // A map of client connections
+        std::map< int, HNSCGISinkClient > m_clientMap;
         
         // The thread helper
         void *m_thelp;
@@ -39,8 +162,6 @@ class HNSCGISink
     
         struct epoll_event m_event;
         struct epoll_event *m_events;
-
-        std::set< int > m_clientSet;
 
         HNSS_RESULT_T openSCGISocket();
 
