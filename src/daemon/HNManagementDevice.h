@@ -8,7 +8,9 @@
 #include "Poco/Util/ServerApplication.h"
 #include "Poco/Util/OptionSet.h"
 
-#include "hnode2/HNAvahiBrowser.h"
+#include <hnode2/HNodeDevice.h>
+#include <hnode2/HNodeConfig.h>
+#include <hnode2/HNAvahiBrowser.h>
 
 #include "HNSCGISink.h"
 #include "HNManagedDeviceArbiter.h"
@@ -21,7 +23,7 @@ typedef enum HNManagementDeviceResultEnum
   HNMD_RESULT_FAILURE
 }HNMD_RESULT_T;
 
-class HNManagementDevice : public Poco::Util::ServerApplication
+class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDispatchInf
 {
     private:
         bool _helpRequested   = false;
@@ -48,6 +50,12 @@ class HNManagementDevice : public Poco::Util::ServerApplication
         HNMD_RESULT_T removeSocketFromEPoll( int sfd );
 
     protected:
+        //  
+        virtual void dispatchProxyRequest( HNProxyRequest *request ); 
+        
+        // HNDevice REST callback
+        virtual void dispatchEP( HNodeDevice *parent, HNOperationData *opData );
+
         void defineOptions( Poco::Util::OptionSet& options );
         void handleOption( const std::string& name, const std::string& value );
         int main( const std::vector<std::string>& args );

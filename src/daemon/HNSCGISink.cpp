@@ -213,6 +213,25 @@ HNSCGIChunk::extractNullStr( std::string &nullStr )
     return ( strComplete == false ) ? HNSS_RESULT_PARSE_WAIT : HNSS_RESULT_PARSE_COMPLETE;
 }
 
+HNSS_RESULT_T
+HNSCGIChunk::extractNetStrEnd()
+{   
+    // Check if there is any data available, 
+    // if not wait for some more
+    if( m_startIdx == m_endIdx )
+        return HNSS_RESULT_PARSE_WAIT;
+        
+    // Look for only the trailing ',' character of a netstring
+    if( m_data[ m_startIdx ] == ',' )
+    {
+        consumeBytes(1);
+        return HNSS_RESULT_PARSE_COMPLETE;
+    }
+    
+    // Parsing error
+    return HNSS_RESULT_PARSE_ERR;
+}
+
 HNSCGIChunkQueue::HNSCGIChunkQueue()
 {
 
@@ -315,12 +334,11 @@ HNSCGIChunkQueue::parseNetStrStart( uint &headerLength )
            break;
            
            // Found part of the length, check next chunk.
-           case HNSS_RESULT_PARSE_PARTIAL:
+           case HNSS_RESULT_PARSE_WAIT:
            break;
            
            // Need to wait for more data to be recieved
            // or we encountered an error.
-           case HNSS_RESULT_PARSE_WAIT:
            case HNSS_RESULT_PARSE_ERR:
                return result;
            break;
@@ -364,12 +382,11 @@ HNSCGIChunkQueue::parseNullStr( std::string &name )
            break;
            
            // Found part of the length, check next chunk.
-           case HNSS_RESULT_PARSE_PARTIAL:
+           case HNSS_RESULT_PARSE_WAIT:
            break;
            
            // Need to wait for more data to be recieved
            // or we encountered an error.
-           case HNSS_RESULT_PARSE_WAIT:
            case HNSS_RESULT_PARSE_ERR:
                return result;
            break;
@@ -382,6 +399,54 @@ HNSCGIChunkQueue::parseNullStr( std::string &name )
    return HNSS_RESULT_PARSE_WAIT;
 }
 
+HNSS_RESULT_T 
+HNSCGIChunkQueue::parseNetStrEnd()
+{
+   HNSS_RESULT_T result = HNSS_RESULT_PARSE_WAIT;
+    
+   printf( "parseNetStrEnd - list: %lu\n", m_chunkList.size() );
+   
+   // Start parsing through the available data
+   while( m_chunkList.empty() == false )
+   {
+       HNSCGIChunk *curChunk = m_chunkList.back();
+
+       // Check in the current chunk of data.
+       result = curChunk->extractNetStrEnd();
+       
+       // Determine if the current chunk has been consumed, if so remove it and move to the next
+       if( curChunk->isConsumed() == true )
+       {
+           m_chunkList.pop_back();
+       }
+       
+       // Check on the result, and next steps
+       switch( result )
+       {
+           // Parsing complete and successful
+           case HNSS_RESULT_PARSE_COMPLETE:
+               return HNSS_RESULT_PARSE_COMPLETE;
+           break;
+           
+           // Found part of the length, check next chunk.
+           case HNSS_RESULT_PARSE_WAIT:
+           break;
+           
+           // Need to wait for more data to be recieved
+           // or we encountered an error.
+           case HNSS_RESULT_PARSE_ERR:
+               return result;
+           break;
+       }
+   }
+   
+   // Got here by finding a partial match,
+   // but then running out of data. 
+   // Signal we want to wait for more data.
+   return HNSS_RESULT_PARSE_WAIT;
+}
+
+#if 0
 HNSCGIReqRsp::HNSCGIReqRsp()
 {
 
@@ -399,6 +464,7 @@ HNSCGIReqRsp::addHdrPair( std::string name, std::string value )
     
     m_paramMap.insert( std::pair<std::string, std::string>(name, value) );
 }
+#endif
 
 HNSCGISinkClient::HNSCGISinkClient( HNSCGISink *parent )
 {
@@ -436,7 +502,7 @@ HNSCGISinkClient::rxNextParse()
         // Start of parsing a new request
         case HNSCGI_SS_IDLE:
         {
-            m_curReq = new HNSCGIReqRsp;
+            m_curReq = new HNProxyRequest;
             
             m_expHdrLen = 0;
             m_rcvHdrLen = 0;
@@ -558,7 +624,30 @@ HNSCGISinkClient::rxNextParse()
         break;
         
         // Find and strip off the header netstring trailing comma
-        case HNSCGI_SS_HDR_NSTR_COMMA:       
+        case HNSCGI_SS_HDR_NSTR_COMMA:
+        {   
+            result = m_rxQueue.parseNetStrEnd();
+            
+            switch( result )
+            {
+                case HNSS_RESULT_PARSE_COMPLETE:
+                    printf( "HDR_NSTR End:\n");
+
+                    m_curReq->setHeaderDone( true );
+                    
+                    setRxParseState( HNSCGI_SS_PAYLOAD );
+                    return HNSS_RESULT_PARSE_CONTINUE; 
+                break;
+                
+                case HNSS_RESULT_PARSE_WAIT:
+                break;
+                
+                case HNSS_RESULT_PARSE_ERR:
+                    setRxParseState( HNSCGI_SS_ERROR ); 
+                    return HNSS_RESULT_PARSE_ERR;
+                break;
+            }            
+        }        
         break;
         
         // Waiting for the Content Length of payload
@@ -575,6 +664,7 @@ HNSCGISinkClient::rxNextParse()
 
     }
 
+    return HNSS_RESULT_SUCCESS;
 }
 
 HNSS_RESULT_T 
@@ -603,15 +693,27 @@ HNSCGISinkClient::recvData( int fd )
         result = rxNextParse();    
     }
     
-    if( result == HNSS_RESULT_PARSE_ERR )
+    switch( result )
     {
-        printf( "ERROR: Rx parsing\n");
-        return HNSS_RESULT_FAILURE;
+        case HNSS_RESULT_PARSE_ERR:
+        {
+            printf( "ERROR: Rx parsing\n");
+            return HNSS_RESULT_FAILURE;
+        }
+        break;
+            
+        case HNSS_RESULT_PARSE_WAIT:
+        {
+            printf( "Wait for more data\n");    
+        }
     }
     
-    if( result == HNSS_RESULT_PARSE_WAIT )
+    // Check if the main loop should be notified of the 
+    // new request
+    if( (m_curReq != NULL) && (m_curReq->isHeaderDone() == true) && (m_curReq->isDispatched() == false) )
     {
-        printf( "Wait for more data\n");    
+        m_curReq->setDispatched( true );
+        m_parent->dispatchProxyRequest( m_curReq );
     }
     
     return HNSS_RESULT_SUCCESS;
@@ -1246,6 +1348,12 @@ HNSCGISink::processClientRequest( int cfd )
     }
 #endif
     return HNSS_RESULT_SUCCESS;
+}
+
+void 
+HNSCGISink::dispatchProxyRequest( HNProxyRequest *reqPtr )
+{
+
 }
 
 

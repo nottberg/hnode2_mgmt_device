@@ -262,7 +262,7 @@ HNMDL_RESULT_T
 HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
 {
 
-
+    return HNMDL_RESULT_SUCCESS;
 }
 
 void 

@@ -9,6 +9,8 @@
 
 #include "hnode2/HNodeID.h"
 
+#include "HNProxyReqRsp.h"
+
 // Forward declaration
 class HNSCGIRunner;
 class HNSCGISink;
@@ -17,10 +19,9 @@ typedef enum HNSCGISinkResultEnum
 {
     HNSS_RESULT_SUCCESS,
     HNSS_RESULT_FAILURE,
-    HNSS_RESULT_PARSE_PARTIAL,
     HNSS_RESULT_PARSE_COMPLETE,
     HNSS_RESULT_PARSE_WAIT,
-    HNSS_RESULT_PARSE_CONTINUE,
+    HNSS_RESULT_PARSE_CONTINUE,    
     HNSS_RESULT_PARSE_ERR,
     HNSS_RESULT_RCV_DONE,
     HNSS_RESULT_RCV_CONT,
@@ -61,6 +62,7 @@ class HNSCGIChunk
         
         HNSS_RESULT_T extractNetStrStart( std::string &lenStr );
         HNSS_RESULT_T extractNullStr( std::string &nullStr );
+        HNSS_RESULT_T extractNetStrEnd();        
 };
     
 class HNSCGIChunkQueue
@@ -81,8 +83,12 @@ class HNSCGIChunkQueue
         HNSS_RESULT_T parseNetStrStart( uint &headerLength );
 
         HNSS_RESULT_T parseNullStr( std::string &name );
+        
+        HNSS_RESULT_T parseNetStrEnd();
+        
 };
 
+#if 0
 class HNSCGIReqRsp
 {
     private:
@@ -96,8 +102,15 @@ class HNSCGIReqRsp
         HNSCGIReqRsp();
        ~HNSCGIReqRsp();
        
+        void setHeaderDone( bool value );
+        bool isHeaderDone();
+        
+        void setRunning( bool value );
+        bool isRunning();     
+       
         void addHdrPair( std::string name, std::string value );
 };
+#endif
 
 typedef enum HNSCGISinkClientStreamState
 {
@@ -116,7 +129,7 @@ class HNSCGISinkClient
         HNSCGISink        *m_parent;
 
         HNSCGIChunkQueue   m_rxQueue;
-        HNSCGIReqRsp      *m_curReq;
+        HNProxyRequest    *m_curReq;
         
         //std::list< HNSCGIReqRsp* > m_rrQueue;
         
@@ -187,6 +200,8 @@ class HNSCGISink
 
         void debugPrint();
 
+        void dispatchProxyRequest( HNProxyRequest *reqPtr );
+        
     friend HNSCGIRunner;
 };
 
