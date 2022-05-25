@@ -1,8 +1,6 @@
 #ifndef __HN_MANAGEMENT_DEVICE_H__
 #define __HN_MANAGEMENT_DEVICE_H__
 
-#include <sys/epoll.h>
-
 #include <string>
 #include <vector>
 #include <set>
@@ -10,7 +8,12 @@
 #include "Poco/Util/ServerApplication.h"
 #include "Poco/Util/OptionSet.h"
 
-#include "hnode2/HNAvahiBrowser.h"
+#include <hnode2/HNodeDevice.h>
+#include <hnode2/HNodeConfig.h>
+#include <hnode2/HNAvahiBrowser.h>
+
+#include "HNSCGISink.h"
+#include "HNManagedDeviceArbiter.h"
 
 #define MAXEVENTS  8
 
@@ -20,7 +23,7 @@ typedef enum HNManagementDeviceResultEnum
   HNMD_RESULT_FAILURE
 }HNMD_RESULT_T;
 
-class HNManagementDevice : public Poco::Util::ServerApplication
+class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDispatchInf
 {
     private:
         bool _helpRequested   = false;
@@ -31,28 +34,28 @@ class HNManagementDevice : public Poco::Util::ServerApplication
 
         std::string instanceName;
 
-        bool quit;
-
         int epollFD;
-        int signalFD; 
-        int acceptFD;
     
         struct epoll_event event;
         struct epoll_event *events;
 
-        std::set< int > clientSet;
+        HNManagedDeviceArbiter arbiter;
+        HNSCGISink             reqsink;
+        
+        bool quit;
 
         void displayHelp();
 
         HNMD_RESULT_T addSocketToEPoll( int sfd );
         HNMD_RESULT_T removeSocketFromEPoll( int sfd );
-        HNMD_RESULT_T addSignalSocket( int sfd );
-        HNMD_RESULT_T openListenerSocket( std::string deviceName, std::string instanceName );
-        HNMD_RESULT_T processNewClientConnections();
-        HNMD_RESULT_T closeClientConnection( int clientFD );
-        HNMD_RESULT_T processClientRequest( int cfd );
 
     protected:
+        //  
+        virtual void dispatchProxyRequest( HNProxyRequest *request ); 
+        
+        // HNDevice REST callback
+        virtual void dispatchEP( HNodeDevice *parent, HNOperationData *opData );
+
         void defineOptions( Poco::Util::OptionSet& options );
         void handleOption( const std::string& name, const std::string& value );
         int main( const std::vector<std::string>& args );
