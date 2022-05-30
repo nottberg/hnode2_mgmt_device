@@ -22,6 +22,7 @@ namespace pjs = Poco::JSON;
 namespace pdy = Poco::Dynamic;
 namespace pn = Poco::Net;
 
+#if 0
 // Define these locally so it is not in the header file.
 class HNProxyHandler: public pn::HTTPRequestHandler
 {
@@ -67,5 +68,6 @@ class HNMgmtProxy
 
         //void *m_srvPtr;
 };
+#endif
 
 #endif // __HN_MGMT_PROXY_H__

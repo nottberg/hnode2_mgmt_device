@@ -11,6 +11,7 @@
 #include <hnode2/HNodeDevice.h>
 #include <hnode2/HNodeConfig.h>
 #include <hnode2/HNAvahiBrowser.h>
+#include <hnode2/HNSigSyncQueue.h>
 
 #include "HNSCGISink.h"
 #include "HNManagedDeviceArbiter.h"
@@ -42,6 +43,8 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
         HNManagedDeviceArbiter arbiter;
         HNSCGISink             reqsink;
         
+        HNSigSyncQueue         m_proxyRequestQueue;
+
         bool quit;
 
         void displayHelp();
@@ -50,8 +53,6 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
         HNMD_RESULT_T removeSocketFromEPoll( int sfd );
 
     protected:
-        //  
-        virtual void dispatchProxyRequest( HNProxyRequest *request ); 
         
         // HNDevice REST callback
         virtual void dispatchEP( HNodeDevice *parent, HNOperationData *opData );

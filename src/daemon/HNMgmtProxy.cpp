@@ -5,6 +5,7 @@
 #include "HNProxyReqRsp.h"
 #include "HNMgmtProxy.h"
 
+#if 0
 
 HNProxyHandler::HNProxyHandler( HNOperationData *operationData )
 :m_opData( operationData )
@@ -281,5 +282,5 @@ HNMgmtProxy::startRequest( HNProxyRequest *request, HNProxyResponse *response )
     #endif
 }
 
-
+#endif
 

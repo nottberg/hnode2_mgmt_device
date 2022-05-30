@@ -114,6 +114,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     HNodeDevice hnDevice( HN_MGMTDAEMON_DEVICE_NAME, instanceName );
 
     hnDevice.setName("mg1");
+    hnDevice.setPort(8400);
 
     HNDEndpoint hndEP;
 
@@ -121,6 +122,10 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     hndEP.setOpenAPIJson( g_HNode2MgmtRest ); 
 
     hnDevice.addEndpoint( hndEP );
+ 
+    m_proxyRequestQueue.init();
+
+    reqsink.setParentRequestQueue( &m_proxyRequestQueue );
 
     // Initialize for event loop
     epollFD = epoll_create1( 0 );
@@ -153,6 +158,14 @@ HNManagementDevice::main( const std::vector<std::string>& args )
         return Application::EXIT_SOFTWARE;
     }
 
+    // Hook the Proxy Request Queue into the event loop
+    int proxyQFD = m_proxyRequestQueue.getEventFD();
+   
+    if( addSocketToEPoll( proxyQFD ) !=  HNMD_RESULT_SUCCESS )
+    {
+        return Application::EXIT_SOFTWARE;
+    }
+
     // The event loop 
     quit = false;
     while( quit == false )
@@ -176,6 +189,8 @@ HNManagementDevice::main( const std::vector<std::string>& args )
             //log.error( "ERROR: Failure report by epoll event loop: %s", strerror( errno ) );
             return Application::EXIT_SOFTWARE;
         }
+
+        std::cout << "HNManagementDevice::monitor wakeup" << std::endl;
 
         // Check these critical tasks everytime
         // the event loop wakes up.
@@ -230,6 +245,19 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                     avBrowser.getEventQueue().releaseRecord( event );
                 }
             }
+            else if( proxyQFD == events[i].data.fd )
+            {
+                while( m_proxyRequestQueue.getPostedCnt() )
+                {
+                    HNProxyHTTPReqRsp *proxyRR = (HNProxyHTTPReqRsp *) m_proxyRequestQueue.aquireRecord();
+
+                    std::cout << "HNManagementDevice::Received proxy request" << std::endl;
+
+                    proxyRR->getResponse().configAsNotFound();
+
+                    reqsink.getProxyResponseQueue()->postRecord( proxyRR );
+                }
+            }
         }
     }
 
@@ -252,7 +280,7 @@ HNManagementDevice::addSocketToEPoll( int sfd )
     flags = fcntl( sfd, F_GETFL, 0 );
     if( flags == -1 )
     {
-        syslog( LOG_ERR, "Failed to get socket flags: %s", strerror(errno) );
+        syslog( LOG_ERR, "HNManagementDevice - Failed to get socket flags: %s", strerror(errno) );
         return HNMD_RESULT_FAILURE;
     }
 
@@ -260,7 +288,7 @@ HNManagementDevice::addSocketToEPoll( int sfd )
     s = fcntl( sfd, F_SETFL, flags );
     if( s == -1 )
     {
-        syslog( LOG_ERR, "Failed to set socket flags: %s", strerror(errno) );
+        syslog( LOG_ERR, "HNManagementDevice - Failed to set socket flags: %s", strerror(errno) );
         return HNMD_RESULT_FAILURE; 
     }
 
@@ -377,12 +405,6 @@ HNManagementDevice::dispatchEP( HNodeDevice *parent, HNOperationData *opData )
 #endif
     // Return to caller
     opData->responseSend();
-}
-
-void 
-HNManagementDevice::dispatchProxyRequest( HNProxyRequest *request )
-{
-
 }
 
 const std::string g_HNode2MgmtRest = R"(

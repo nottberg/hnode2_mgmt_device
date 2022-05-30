@@ -3,11 +3,15 @@
 
 #include <sys/epoll.h>
 
+#include <ext/stdio_filebuf.h>
+
 #include <string>
 #include <map>
 #include <list>
+#include <fstream>
 
-#include "hnode2/HNodeID.h"
+#include <hnode2/HNSigSyncQueue.h>
+#include <hnode2/HNodeID.h>
 
 #include "HNProxyReqRsp.h"
 
@@ -25,7 +29,9 @@ typedef enum HNSCGISinkResultEnum
     HNSS_RESULT_PARSE_ERR,
     HNSS_RESULT_RCV_DONE,
     HNSS_RESULT_RCV_CONT,
-    HNSS_RESULT_RCV_ERR
+    HNSS_RESULT_RCV_ERR,
+    HNSS_RESULT_REQUEST_READY,
+    HNSS_RESULT_CLIENT_DONE
 }HNSS_RESULT_T;
 
 class HNSCGIChunk
@@ -88,30 +94,6 @@ class HNSCGIChunkQueue
         
 };
 
-#if 0
-class HNSCGIReqRsp
-{
-    private:
-        // 
-        uint32_t m_contentLength;
-        
-        // 
-        std::map< std::string, std::string > m_paramMap;
-        
-    public:
-        HNSCGIReqRsp();
-       ~HNSCGIReqRsp();
-       
-        void setHeaderDone( bool value );
-        bool isHeaderDone();
-        
-        void setRunning( bool value );
-        bool isRunning();     
-       
-        void addHdrPair( std::string name, std::string value );
-};
-#endif
-
 typedef enum HNSCGISinkClientStreamState
 {
     HNSCGI_SS_IDLE,           // In between requests.
@@ -124,15 +106,14 @@ typedef enum HNSCGISinkClientStreamState
     HNSCGI_SS_ERROR           // An error occurred during processing.
 }HNSC_SS_T;
 
-class HNSCGISinkClient
+class HNSCGISinkClient : public HNPRRContentSource, public HNPRRContentSink
 {
+        uint               m_fd;
         HNSCGISink        *m_parent;
 
         HNSCGIChunkQueue   m_rxQueue;
-        HNProxyRequest    *m_curReq;
-        
-        //std::list< HNSCGIReqRsp* > m_rrQueue;
-        
+        HNProxyHTTPReqRsp  m_curRR;
+               
         HNSC_SS_T  m_rxState;
         
         uint m_expHdrLen;
@@ -141,15 +122,24 @@ class HNSCGISinkClient
         std::string m_curHdrName;
         std::string m_curHdrValue;
         
+        __gnu_cxx::stdio_filebuf<char> m_filebuf;
+        std::iostream m_iostream; 
+
         void setRxParseState( HNSC_SS_T newState );
         HNSS_RESULT_T rxNextParse();
         
     public:
-        HNSCGISinkClient( HNSCGISink *parent );
+        HNSCGISinkClient( uint fd, HNSCGISink *parent );
        ~HNSCGISinkClient();
        
-        HNSS_RESULT_T recvData( int fd );
-        
+        HNSS_RESULT_T recvData();
+
+        void finish();
+
+        HNProxyHTTPReqRsp *getReqRsp();
+
+        virtual std::istream& getSourceStreamRef();
+        virtual std::ostream& getSinkStreamRef();
 };
 
 class HNSCGISink
@@ -162,7 +152,7 @@ class HNSCGISink
         // A map of reqrsp objects
         
         // A map of client connections
-        std::map< int, HNSCGISinkClient > m_clientMap;
+        std::map< int, HNSCGISinkClient* > m_clientMap;
         
         // The thread helper
         void *m_thelp;
@@ -175,6 +165,10 @@ class HNSCGISink
     
         struct epoll_event m_event;
         struct epoll_event *m_events;
+
+        HNSigSyncQueue  m_proxyResponseQueue;
+
+        HNSigSyncQueue  *m_parentRequestQueue;
 
         HNSS_RESULT_T openSCGISocket();
 
@@ -194,14 +188,21 @@ class HNSCGISink
 
         //HNMDL_RESULT_T notifyDiscoverAdd( HNMDARecord &record );
         //HNMDL_RESULT_T notifyDiscoverRemove( HNMDARecord &record );
+        void setParentRequestQueue( HNSigSyncQueue *parentRequestQueue );
+
+        HNSigSyncQueue* getProxyResponseQueue();
 
         void start( std::string instance );
         void shutdown();
 
         void debugPrint();
 
-        void dispatchProxyRequest( HNProxyRequest *reqPtr );
+        void queueProxyRequest( HNProxyHTTPReqRsp *reqPtr );
         
+        void markForSend( uint fd );
+
+        void clientComplete( uint fd );
+
     friend HNSCGIRunner;
 };
 

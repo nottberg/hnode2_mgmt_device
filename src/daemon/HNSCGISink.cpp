@@ -10,6 +10,7 @@
 #include <syslog.h>
 
 #include <iostream>
+#include <sstream>
 
 #include "Poco/Thread.h"
 #include "Poco/Runnable.h"
@@ -124,26 +125,26 @@ HNSCGIChunk::extractNetStrStart( std::string &lenStr )
     
     bool hdrComplete = false;
   
-    printf( "extractNetStrStart - m_startIdx: %u, m_endIdx: %u\n", m_startIdx, m_endIdx );
+    //printf( "extractNetStrStart - m_startIdx: %u, m_endIdx: %u\n", m_startIdx, m_endIdx );
     
     curIdx = m_startIdx;
     while( curIdx <= m_endIdx )
     {
         uint8_t curByte = m_data[ curIdx ];
             
-        printf( "extractNetStrStart - curIdx: %u, byte: '%c'\n", curIdx, curByte );
+        //printf( "extractNetStrStart - curIdx: %u, byte: '%c'\n", curIdx, curByte );
         
         bytesProcessed += 1;
             
         if( isspace( curByte ) == true )
         {
-            printf( "isspace\n");
+            //printf( "isspace\n");
             curIdx += 1;
             continue;
         }
         else if( isdigit( curByte ) == true )
         {
-            printf( "isdigit\n");
+            //printf( "isdigit\n");
             //*numIns = curByte;
             //numIns++;
             lenStr.push_back( curByte );
@@ -162,7 +163,7 @@ HNSCGIChunk::extractNetStrStart( std::string &lenStr )
         curIdx += 1;
     }
      
-    printf( "extractNetStrStart - bytesConsumed: %u\n", bytesProcessed );
+    //printf( "extractNetStrStart - bytesConsumed: %u\n", bytesProcessed );
 
     consumeBytes( bytesProcessed );
        
@@ -356,7 +357,7 @@ HNSCGIChunkQueue::parseNullStr( std::string &name )
 {
    HNSS_RESULT_T result = HNSS_RESULT_PARSE_WAIT;
     
-   printf( "parseNullStr - list: %lu\n", m_chunkList.size() );
+   //printf( "parseNullStr - list: %lu\n", m_chunkList.size() );
    
    // Start parsing through the available data
    while( m_chunkList.empty() == false )
@@ -404,7 +405,7 @@ HNSCGIChunkQueue::parseNetStrEnd()
 {
    HNSS_RESULT_T result = HNSS_RESULT_PARSE_WAIT;
     
-   printf( "parseNetStrEnd - list: %lu\n", m_chunkList.size() );
+   //printf( "parseNetStrEnd - list: %lu\n", m_chunkList.size() );
    
    // Start parsing through the available data
    while( m_chunkList.empty() == false )
@@ -460,18 +461,25 @@ HNSCGIReqRsp::~HNSCGIReqRsp()
 void
 HNSCGIReqRsp::addHdrPair( std::string name, std::string value )
 {
-    printf( "addHdrPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
+    //printf( "addHdrPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
     
     m_paramMap.insert( std::pair<std::string, std::string>(name, value) );
 }
 #endif
 
-HNSCGISinkClient::HNSCGISinkClient( HNSCGISink *parent )
+HNSCGISinkClient::HNSCGISinkClient( uint fd, HNSCGISink *parent )
+: m_curRR( fd ), m_filebuf( fd, (std::ios::in|std::ios::out|std::ios::binary) ), m_iostream( &m_filebuf)
 {
+    m_fd      = fd;
+
+    //__gnu_cxx::stdio_filebuf<char> filebuf( m_fd, std::ios::in ); // 1
+    //std:fstream m_fstream (&filebuf); // 2
+
     m_parent  = parent;
     m_rxState = HNSCGI_SS_IDLE;
-    
-    m_curReq     = NULL;
+
+    m_curRR.getRequest().setContentSource( this );
+    m_curRR.getResponse().setContentSink( this );
 }
 
 HNSCGISinkClient::~HNSCGISinkClient()
@@ -494,16 +502,14 @@ HNSCGISinkClient::rxNextParse()
 {
     HNSS_RESULT_T result = HNSS_RESULT_PARSE_ERR;
 
-    printf( "rxNextParse - %u\n", m_rxState );
+    //printf( "rxNextParse - %u\n", m_rxState );
     
     // Handle the data
     switch( m_rxState )
     {
         // Start of parsing a new request
         case HNSCGI_SS_IDLE:
-        {
-            m_curReq = new HNProxyRequest;
-            
+        {   
             m_expHdrLen = 0;
             m_rcvHdrLen = 0;
                         
@@ -520,7 +526,7 @@ HNSCGISinkClient::rxNextParse()
             switch( result )
             {
                 case HNSS_RESULT_PARSE_COMPLETE:
-                    printf( "HDR_NSTR Len: %u\n", m_expHdrLen );
+                    //printf( "HDR_NSTR Len: %u\n", m_expHdrLen );
                     
                     m_curHdrName.clear();
                     m_curHdrValue.clear();
@@ -548,11 +554,11 @@ HNSCGISinkClient::rxNextParse()
             switch( result )
             {
                 case HNSS_RESULT_PARSE_COMPLETE:
-                    printf( "Name Null Str(%lu): %*.*s\n", m_curHdrName.size(), (int)m_curHdrName.size(), (int)m_curHdrName.size(), m_curHdrName.c_str() );
+                    //printf( "Name Null Str(%lu): %*.*s\n", m_curHdrName.size(), (int)m_curHdrName.size(), (int)m_curHdrName.size(), m_curHdrName.c_str() );
                     
                     m_rcvHdrLen += ( m_curHdrName.size() + 1 );
                
-                    printf( "Name exp: %u,  rcv: %u\n", m_expHdrLen, m_rcvHdrLen );
+                    //printf( "Name exp: %u,  rcv: %u\n", m_expHdrLen, m_rcvHdrLen );
      
                     if( m_rcvHdrLen >= m_expHdrLen )
                     {
@@ -585,13 +591,13 @@ HNSCGISinkClient::rxNextParse()
             switch( result )
             {
                 case HNSS_RESULT_PARSE_COMPLETE:
-                    printf( "Value Null Str(%lu): %*.*s\n", m_curHdrValue.size(), (int)m_curHdrValue.size(), (int)m_curHdrValue.size(), m_curHdrValue.c_str() );
+                    //printf( "Value Null Str(%lu): %*.*s\n", m_curHdrValue.size(), (int)m_curHdrValue.size(), (int)m_curHdrValue.size(), m_curHdrValue.c_str() );
                     
-                    m_curReq->addHdrPair( m_curHdrName, m_curHdrValue );
+                    m_curRR.getRequest().addHdrPair( m_curHdrName, m_curHdrValue );
                                         
                     m_rcvHdrLen += ( m_curHdrValue.size() + 1 );
                    
-                    printf( "Value exp: %u,  rcv: %u\n", m_expHdrLen, m_rcvHdrLen );
+                    //printf( "Value exp: %u,  rcv: %u\n", m_expHdrLen, m_rcvHdrLen );
                     
                     if( m_rcvHdrLen > m_expHdrLen )
                     {
@@ -631,12 +637,11 @@ HNSCGISinkClient::rxNextParse()
             switch( result )
             {
                 case HNSS_RESULT_PARSE_COMPLETE:
-                    printf( "HDR_NSTR End:\n");
+                    //printf( "HDR_NSTR End:\n");
 
-                    m_curReq->setHeaderDone( true );
+                    m_curRR.getRequest().setHeaderDone( true );
                     
-                    setRxParseState( HNSCGI_SS_PAYLOAD );
-                    return HNSS_RESULT_PARSE_CONTINUE; 
+                    return HNSS_RESULT_REQUEST_READY;
                 break;
                 
                 case HNSS_RESULT_PARSE_WAIT:
@@ -649,17 +654,10 @@ HNSCGISinkClient::rxNextParse()
             }            
         }        
         break;
-        
-        // Waiting for the Content Length of payload
-        case HNSCGI_SS_PAYLOAD:       
-        break;
-        
-        // Request RX is complete 
-        case HNSCGI_SS_DONE:          
-        break;
-        
+                
         // An error occurred during processing.
-        case HNSCGI_SS_ERROR:          
+        case HNSCGI_SS_ERROR:
+        default:
         break;
 
     }
@@ -668,7 +666,7 @@ HNSCGISinkClient::rxNextParse()
 }
 
 HNSS_RESULT_T 
-HNSCGISinkClient::recvData( int fd )
+HNSCGISinkClient::recvData()
 {
     HNSS_RESULT_T result;
     
@@ -677,7 +675,7 @@ HNSCGISinkClient::recvData( int fd )
     //    m_curRxChunk = new HNSCGIChunk;
         
     // Pull in some data from the socket
-    result = m_rxQueue.recvData( fd );
+    result = m_rxQueue.recvData( m_fd );
     
     if( result != HNSS_RESULT_SUCCESS )
     {
@@ -706,18 +704,64 @@ HNSCGISinkClient::recvData( int fd )
         {
             printf( "Wait for more data\n");    
         }
+
+        // If all of the headers for a request
+        // have been received then proceed with 
+        // dispatch.
+        case HNSS_RESULT_REQUEST_READY:
+        {
+            printf( "Request Ready\n");
+            m_curRR.getRequest().debugPrint();
+            return HNSS_RESULT_REQUEST_READY;
+        }
+
     }
-    
-    // Check if the main loop should be notified of the 
-    // new request
-    if( (m_curReq != NULL) && (m_curReq->isHeaderDone() == true) && (m_curReq->isDispatched() == false) )
-    {
-        m_curReq->setDispatched( true );
-        m_parent->dispatchProxyRequest( m_curReq );
-    }
+
+    return HNSS_RESULT_SUCCESS;
+}
+
+#if 0
+HNSS_RESULT_T 
+HNSCGISinkClient::sendData( std::ostream &outStream )
+{
+    HNSS_RESULT_T result;
+    //char rtnBuf[1024];
+
+    //sprintf( rtnBuf, "Status: 200 OK\r\nContent-Type: text/plain\r\n\r\n42" );
+
+    ssize_t bytesWritten = send( m_fd, rtnBuf, strlen(rtnBuf), 0 );
+ 
+    printf( "HNSCGISinkClient::sendData - fd: %u  bytesWritten: %lu\n", m_fd, bytesWritten );
     
     return HNSS_RESULT_SUCCESS;
 }
+#endif
+
+void
+HNSCGISinkClient::finish()
+{
+    printf( "Finishing client %d\n", m_fd );
+    close( m_fd );
+}
+
+HNProxyHTTPReqRsp*
+HNSCGISinkClient::getReqRsp()
+{
+    return &m_curRR;
+}
+
+std::istream&
+HNSCGISinkClient::getSourceStreamRef()
+{
+    return m_iostream;
+}
+
+std::ostream&
+HNSCGISinkClient::getSinkStreamRef()
+{
+    return m_iostream;
+}
+
 
 // Helper class for running HNSCGISink  
 // proxy loop as an independent thread
@@ -753,6 +797,7 @@ class HNSCGIRunner : public Poco::Runnable
 
 HNSCGISink::HNSCGISink()
 {
+    m_parentRequestQueue = NULL;
     m_instanceName = "default";
     m_runMonitor = false;
     m_thelp = NULL;
@@ -763,38 +808,17 @@ HNSCGISink::~HNSCGISink()
 
 }
 
-#if 0
-HNMDL_RESULT_T 
-HNSCGISink::notifyDiscoverAdd( HNMDARecord &record )
+void 
+HNSCGISink::setParentRequestQueue( HNSigSyncQueue *parentRequestQueue )
 {
-    // Check if the record is existing, or if this is a new discovery.
-    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( record.getCRC32ID() );
-
-    if( it == mdrMap.end() )
-    {
-        // This is a new record
-        record.setDiscoveryState( HNMDR_DISC_STATE_NEW );
-        record.setOwnershipState( HNMDR_OWNER_STATE_UNKNOWN );
-
-        mdrMap.insert( std::pair< std::string, HNMDARecord >( record.getCRC32ID(), record ) );
-    }
-    else
-    {
-        // This is an existing record
-        // Check if updates are appropriate.
-
-    }
-
-    return HNMDL_RESULT_SUCCESS;
+    m_parentRequestQueue = parentRequestQueue;
 }
 
-HNMDL_RESULT_T 
-HNSCGISink::notifyDiscoverRemove( HNMDARecord &record )
+HNSigSyncQueue* 
+HNSCGISink::getProxyResponseQueue()
 {
-
-
+    return &m_proxyResponseQueue;
 }
-#endif
 
 void 
 HNSCGISink::debugPrint()
@@ -853,6 +877,12 @@ HNSCGISink::runSCGILoop()
     // Open Unix named socket for requests
     openSCGISocket();
 
+    // Initialize the proxyResponseQueue
+    // and add it to the epoll loop
+    m_proxyResponseQueue.init();
+    int proxyQFD = m_proxyResponseQueue.getEventFD();
+    addSocketToEPoll( proxyQFD );
+
     // The listen loop 
     while( m_runMonitor == true )
     {
@@ -900,6 +930,31 @@ HNSCGISink::runSCGILoop()
                 processNewClientConnections();
                 continue;
             }
+            else if( proxyQFD == m_events[i].data.fd )
+            {
+                while( m_proxyResponseQueue.getPostedCnt() )
+                {
+                    HNProxyHTTPReqRsp *response = (HNProxyHTTPReqRsp *) m_proxyResponseQueue.aquireRecord();
+
+                    std::map< int, HNSCGISinkClient* >::iterator it = m_clientMap.find( response->getParentTag() );
+                    if( it == m_clientMap.end() )
+                    {
+                        syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", response->getParentTag() );
+                        //return HNSS_RESULT_FAILURE;
+                    }
+    
+                    std::cout << "HNSCGISink::Received proxy response" << std::endl;
+
+                    HNPRR_RESULT_T status = response->getResponse().sendHeaders();
+
+                    if( status == HNPRR_RESULT_RESPONSE_COMPLETE )
+                    {
+                        it->second->finish();
+                        m_clientMap.erase(it);
+                        continue;    
+                    }
+                }
+            }           
             else
             {
                 // Client request
@@ -950,7 +1005,7 @@ HNSCGISink::addSocketToEPoll( int sfd )
     flags = fcntl( sfd, F_GETFL, 0 );
     if( flags == -1 )
     {
-        syslog( LOG_ERR, "Failed to get socket flags: %s", strerror(errno) );
+        syslog( LOG_ERR, "HNSCGISink - Failed to get socket flags: %s", strerror(errno) );
         return HNSS_RESULT_FAILURE;
     }
 
@@ -958,7 +1013,7 @@ HNSCGISink::addSocketToEPoll( int sfd )
     s = fcntl( sfd, F_SETFL, flags );
     if( s == -1 )
     {
-        syslog( LOG_ERR, "Failed to set socket flags: %s", strerror(errno) );
+        syslog( LOG_ERR, "HNSCGISink - Failed to set socket flags: %s", strerror(errno) );
         return HNSS_RESULT_FAILURE; 
     }
 
@@ -1062,8 +1117,8 @@ HNSCGISink::processNewClientConnections( )
 
         syslog( LOG_ERR, "Adding client - sfd: %d", infd );
 
-        HNSCGISinkClient client( this );
-        m_clientMap.insert( std::pair< int, HNSCGISinkClient >( infd, client ) );
+        HNSCGISinkClient *client = new HNSCGISinkClient( infd, this );
+        m_clientMap.insert( std::pair< int, HNSCGISinkClient* >( infd, client ) );
 
         addSocketToEPoll( infd );
     }
@@ -1089,10 +1144,12 @@ HNSCGISink::closeClientConnection( int clientFD )
 HNSS_RESULT_T
 HNSCGISink::processClientRequest( int cfd )
 {
+    HNSS_RESULT_T result;
+
     syslog( LOG_ERR, "Process client data - sfd: %d", cfd );
     
     // Find the client record
-    std::map< int, HNSCGISinkClient >::iterator it = m_clientMap.find( cfd );
+    std::map< int, HNSCGISinkClient* >::iterator it = m_clientMap.find( cfd );
     if( it == m_clientMap.end() )
     {
         syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", cfd );
@@ -1100,261 +1157,71 @@ HNSCGISink::processClientRequest( int cfd )
     }
     
     // Attempt to receive data for current request
-    if( it->second.recvData( cfd ) == HNSS_RESULT_FAILURE )
+    result = it->second->recvData();
+    switch( result )
     {
-        syslog( LOG_ERR, "ERROR: Failed while receiving data - sfd: %d", cfd );
-        return HNSS_RESULT_FAILURE;
-    }
-    
-    // Check if action should be taken for any requests
-    
-    
-    
-#if 0
-    // One of the clients has sent us a message.
-    HNSWDPacketDaemon packet;
-    HNSWDP_RESULT_T   result;
-
-    uint32_t          recvd = 0;
-
-    // Note that a client request is being recieved.
-    log.info( "Receiving client request from fd: %d", cfd );
-
-    // Read the header portion of the packet
-    result = packet.rcvHeader( cfd );
-    if( result == HNSWDP_RESULT_NOPKT )
-    {
-        return HNSS_RESULT_SUCCESS;
-    }
-    else if( result != HNSWDP_RESULT_SUCCESS )
-    {
-        log.error( "ERROR: Failed while receiving packet header." );
-        return HNSS_RESULT_FAILURE;
-    } 
-
-    log.info( "Pkt - type: %d  status: %d  msglen: %d", packet.getType(), packet.getResult(), packet.getMsgLen() );
-
-    // Read any payload portion of the packet
-    result = packet.rcvPayload( cfd );
-    if( result != HNSWDP_RESULT_SUCCESS )
-    {
-        log.error( "ERROR: Failed while receiving packet payload." );
-        return HNSS_RESULT_FAILURE;
-    } 
-
-    // Take any necessary action associated with the packet
-    switch( packet.getType() )
-    {
-        // A request for status from the daemon
-        case HNSWD_PTYPE_STATUS_REQ:
+        case HNSS_RESULT_FAILURE:
         {
-            log.info( "Status request from client: %d", cfd );
-            sendStatus = true;
+            syslog( LOG_ERR, "ERROR: Failed while receiving data - sfd: %d", cfd );
+            return HNSS_RESULT_FAILURE;
         }
         break;
 
-        // Request the daemon to reset itself.
-        case HNSWD_PTYPE_RESET_REQ:
+        case HNSS_RESULT_REQUEST_READY:
         {
-            log.info( "Reset request from client: %d", cfd );
-
-            // Start out with good health.
-            // healthOK = true;
-
-            // Reinitialize the underlying RTLSDR code.
-            // demod.init();
-
-            // Start reading time now.
-            // gettimeofday( &lastReadingTS, NULL );
-
-            sendStatus = true;
-        }
-        break;
-
-        case HNSWD_PTYPE_HEALTH_REQ:
-        {
-            log.info( "Component Health request from client: %d", cfd );
-            sendComponentHealthPacket( cfd );
-        }
-        break;
-
-        // Request a manual sequence of switch activity.
-        case HNSWD_PTYPE_USEQ_ADD_REQ:
-        {
-            HNSM_RESULT_T result;
-            std::string msg;
-            std::string error;
-            struct tm newtime;
-            time_t ltime;
- 
-            log.info( "Uniform sequence add request from client: %d", cfd );
-
-            // Get the current time 
-            ltime = time( &ltime );
-            localtime_r( &ltime, &newtime );
-
-            // Attempt to add the sequence
-            packet.getMsg( msg );
-            result = seqQueue.addUniformSequence( &newtime, msg, error );
-            
-            if( result != HNSM_RESULT_SUCCESS )
-            {
-                // Create the packet.
-                HNSWDPacketDaemon opacket( HNSWD_PTYPE_USEQ_ADD_RSP, HNSWD_RCODE_FAILURE, error );
-
-                // Send packet to requesting client
-                opacket.sendAll( cfd );
-
-                return HNSS_RESULT_SUCCESS;
-            }
-            
-            seqQueue.debugPrint();
-
-            // Create the packet.
-            HNSWDPacketDaemon opacket( HNSWD_PTYPE_USEQ_ADD_RSP, HNSWD_RCODE_SUCCESS, error );
-
-            // Send packet to requesting client
-            opacket.sendAll( cfd );
-        }
-        break;
-
-        case HNSWD_PTYPE_SEQ_CANCEL_REQ:
-        {
-            std::string msg;
-            HNSM_RESULT_T result;
- 
-            log.info( "Cancel sequence request from client: %d", cfd );
-
-            result = seqQueue.cancelSequences();
-            
-            if( result != HNSM_RESULT_SUCCESS )
-            {
-                std::string error;
-
-                // Create the packet.
-                HNSWDPacketDaemon opacket( HNSWD_PTYPE_SEQ_CANCEL_RSP, HNSWD_RCODE_FAILURE, error );
-
-                // Send packet to requesting client
-                opacket.sendAll( cfd );
-
-                return HNSS_RESULT_SUCCESS;
-            }
-            
-            seqQueue.debugPrint();
-
-            // Create the packet.
-            HNSWDPacketDaemon opacket( HNSWD_PTYPE_SEQ_CANCEL_RSP, HNSWD_RCODE_SUCCESS, msg );
-
-            // Send packet to requesting client
-            opacket.sendAll( cfd );
-        }
-        break;
-
-        case HNSWD_PTYPE_SWINFO_REQ:
-        {
-            log.info( "Switch Info request from client: %d", cfd );
-            sendSwitchInfoPacket( cfd );
-        }
-        break;
-
-        case HNSWD_PTYPE_SCH_STATE_REQ:
-        {
-            pjs::Parser parser;
-            std::string msg;
-            std::string empty;
-            std::string error;
-            std::string newState;
-            std::string inhDur;
-
-            log.info( "Schedule State request from client: %d", cfd );
-
-            // Get inbound request message
-            packet.getMsg( msg );
-
-            // Parse the json
-            try
-            {
-                // Attempt to parse the json
-                pdy::Var varRoot = parser.parse( msg );
-
-                // Get a pointer to the root object
-                pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
-
-                newState = jsRoot->optValue( "state", empty );
-                inhDur   = jsRoot->optValue( "inhibitDuration", empty );
-
-                if( newState.empty() || inhDur.empty() )
-                {
-                    log.error( "ERROR: Schedule State request malformed." );
-
-                    // Send error packet.
-                    HNSWDPacketDaemon opacket( HNSWD_PTYPE_SCH_STATE_RSP, HNSWD_RCODE_FAILURE, error );
-                    opacket.sendAll( cfd );
-
-                    return HNSS_RESULT_SUCCESS;
-                }
-            }
-            catch( Poco::Exception ex )
-            {
-                log.error( "ERROR: Schedule State request malformed - parse failure: %s", ex.displayText().c_str() );
-
-                // Send error packet.
-                HNSWDPacketDaemon opacket( HNSWD_PTYPE_SCH_STATE_RSP, HNSWD_RCODE_FAILURE, error );
-                opacket.sendAll( cfd );
-
-                return HNSS_RESULT_SUCCESS;
-            }
-
-            if( "disable" == newState )
-                schMat.setStateDisabled();         
-            else if( "enable" == newState )
-                schMat.setStateEnabled();
-            else if( "inhibit" == newState )
-            {
-                struct tm newtime;
-                time_t ltime;
- 
-                // Get the current time 
-                ltime = time( &ltime );
-                localtime_r( &ltime, &newtime );
-
-                schMat.setStateInhibited( &newtime, inhDur );
-            }
-            else
-            {
-                log.error( "ERROR: Schedule State request - request state is not supported: %s", newState.c_str() );
-
-                // Send error packet.
-                HNSWDPacketDaemon opacket( HNSWD_PTYPE_SCH_STATE_RSP, HNSWD_RCODE_FAILURE, error );
-                opacket.sendAll( cfd );
-
-                return HNSS_RESULT_SUCCESS;
-            }
-
-            // Send success response
-            HNSWDPacketDaemon opacket( HNSWD_PTYPE_SCH_STATE_RSP, HNSWD_RCODE_SUCCESS, empty );
-            opacket.sendAll( cfd );
-
+            queueProxyRequest( it->second->getReqRsp() );
             return HNSS_RESULT_SUCCESS;
         }
         break;
 
-        // Unknown packet
-        default:
-        {
-            log.warn( "Warning: RX of unsupported packet, discarding - type: %d", packet.getType() );
-        }
-        break;
+    }
+
+#if 0
+    case HNSS_RESULT_CLIENT_DONE:
+    {
+        printf( "Finishing client %d\n", cfd);
+        close(cfd);
+        m_clientMap.erase(it);
+        return HNSS_RESULT_SUCCESS;
     }
 #endif
+
+    // Check if action should be taken for any requests
+    
     return HNSS_RESULT_SUCCESS;
 }
 
 void 
-HNSCGISink::dispatchProxyRequest( HNProxyRequest *reqPtr )
+HNSCGISink::queueProxyRequest( HNProxyHTTPReqRsp *reqPtr )
 {
+    if( m_parentRequestQueue == NULL )
+        return;
 
+    m_parentRequestQueue->postRecord( reqPtr );
 }
 
+#if 0
+void 
+HNSCGISink::markForSend( uint fd )
+{
+    // FIXME:  Temporary, this should be scheduled through the epoll loop instead.
+
+    // Find the client record
+    std::map< int, HNSCGISinkClient >::iterator it = m_clientMap.find( fd );
+    if( it == m_clientMap.end() )
+    {
+        syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", fd );
+        //return HNSS_RESULT_FAILURE;
+    }
+    
+    // Attempt to receive data for current request
+    if( it->second.sendData() == HNSS_RESULT_FAILURE )
+    {
+        syslog( LOG_ERR, "ERROR: Failed while sending data - sfd: %d", fd );
+        //return HNSS_RESULT_FAILURE;
+    }
+
+}
+#endif
 
 
