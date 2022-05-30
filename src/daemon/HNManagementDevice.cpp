@@ -19,6 +19,7 @@
 #include "Poco/Checksum.h"
 #include <Poco/JSON/Object.h>
 #include <Poco/JSON/Parser.h>
+#include "Poco/URI.h"
 
 #include <hnode2/HNodeDevice.h>
 
@@ -31,6 +32,7 @@ namespace pdy = Poco::Dynamic;
 
 // Forward declaration
 extern const std::string g_HNode2MgmtRest;
+extern const std::string g_HNode2ProxyMgmtAPI;
 
 void 
 HNManagementDevice::defineOptions( OptionSet& options )
@@ -123,6 +125,10 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
     hnDevice.addEndpoint( hndEP );
  
+    // Setup the decoder for proxy requests that will be handled locally.
+    registerProxyEndpointsFromOpenAPI( g_HNode2ProxyMgmtAPI );
+
+    // Setup the queue for proxy requests from the SCGI interface
     m_proxyRequestQueue.init();
 
     reqsink.setParentRequestQueue( &m_proxyRequestQueue );
@@ -253,9 +259,21 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
                     std::cout << "HNManagementDevice::Received proxy request" << std::endl;
 
-                    proxyRR->getResponse().configAsNotFound();
+                    HNOperationData *opData = mapProxyRequest( proxyRR );
 
-                    reqsink.getProxyResponseQueue()->postRecord( proxyRR );
+                    if( opData == NULL )
+                    {
+                        proxyRR->getResponse().configAsNotFound();
+                        reqsink.getProxyResponseQueue()->postRecord( proxyRR );
+                    }
+                    else
+                    {
+                        std::cout << "Local proxy request: " << opData->getOpID() << std::endl;
+                        handleLocalProxyRequest( proxyRR, opData );
+                        reqsink.getProxyResponseQueue()->postRecord( proxyRR );
+                    }
+
+                    delete opData;
                 }
             }
         }
@@ -407,6 +425,184 @@ HNManagementDevice::dispatchEP( HNodeDevice *parent, HNOperationData *opData )
     opData->responseSend();
 }
 
+HNRestPath *
+HNManagementDevice::addProxyPath( std::string dispatchID, std::string operationID, HNRestDispatchInterface *dispatchInf )
+{
+    HNRestPath newPath;
+    HNRestPath *pathPtr;
+
+    // Add new element
+    m_proxyPathList.push_back( newPath );
+
+    // Get pointer
+    pathPtr = &m_proxyPathList.back();
+    
+    pathPtr->init( dispatchID, operationID, dispatchInf );
+
+    return pathPtr;
+}
+
+void 
+HNManagementDevice::registerProxyEndpointsFromOpenAPI( std::string openAPIJson )
+{
+    HNRestPath *path;
+
+    // Invoke the json parser
+    try
+    {
+        // Attempt to parse the provided openAPI input
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( openAPIJson );
+
+        // Get a pointer to the root object
+        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
+
+        // Make sure the "paths" field exists, otherwise nothing to do
+        if( jsRoot->isObject( "paths" ) == false )
+            return;
+
+        // Extract the paths object
+        pjs::Object::Ptr jsPathList = jsRoot->getObject( "paths" );
+
+        // Iterate through the fields, each field represents a path
+        for( pjs::Object::ConstIterator pit = jsPathList->begin(); pit != jsPathList->end(); pit++ )
+        {
+            std::vector< std::string > pathStrs;
+
+            // Parse the extracted uri
+            Poco::URI uri( pit->first );
+
+            // Break it into tokens by '/'
+            uri.getPathSegments( pathStrs );
+
+            std::cout << "regend - uri: " << uri.toString() << std::endl;
+            std::cout << "regend - segcnt: " << pathStrs.size() << std::endl;
+
+            // Turn the iterator into a object pointer
+            pjs::Object::Ptr jsPath = pit->second.extract< pjs::Object::Ptr >();
+
+            // Iterate through the fields, each field represents a supported HTTP Method
+            for( pjs::Object::ConstIterator mit = jsPath->begin(); mit != jsPath->end(); mit++ )
+            {
+                std::cout << "regend - method: " << mit->first << std::endl;
+
+                // Get a pointer to the method object
+                pjs::Object::Ptr jsMethod = mit->second.extract< pjs::Object::Ptr >();
+
+                // The method object must contain a operationID field
+                // which will be used by the dispatch Callback to know
+                // the request that was made.
+                std::string opID = jsMethod->getValue< std::string >( "operationId" );
+                std::cout << "regend - opID: " << opID << std::endl;
+
+                // We have everything we need so now the new path can be added to the 
+                // http factory class
+                path = addProxyPath( "HNManagementDevice", opID, NULL );
+
+                // Record the method for this specific path record
+                path->setMethod( mit->first );
+
+                // Build up the path element array, taking into account url based parameters
+                for( std::vector< std::string >::iterator sit = pathStrs.begin(); sit != pathStrs.end(); sit++ )
+                {
+                    std::cout << "PathComp: " << *sit << std::endl;
+                    // Check if this is a parameter or a regular path element.
+                    if( (sit->front() == '{') && (sit->back() == '}') )
+                    {
+                        // Add a parameter capture
+                        std::string paramName( (sit->begin() + 1), (sit->end() - 1) );
+                        std::cout << "regend - paramName: " << paramName << std::endl;
+                        path->addPathElement( HNRPE_TYPE_PARAM, paramName );
+                    }
+                    else
+                    {
+                        // Add a regular path element
+                        path->addPathElement( HNRPE_TYPE_PATH, *sit );
+                    }
+                } 
+            }
+        }
+
+    }
+    catch( Poco::Exception ex )
+    {
+        std::cerr << "registerProxyEndpointsFromOpenAPI - json error: " << ex.displayText() << std::endl;
+        return;
+    }
+}
+
+HNOperationData*
+HNManagementDevice::mapProxyRequest( HNProxyHTTPReqRsp *reqRR )
+{
+    HNOperationData *opData = NULL;
+    std::vector< std::string > pathStrs;
+
+    Poco::URI uri( reqRR->getRequest().getURI() );
+
+    std::cout << "mapProxyRequest - method: " << reqRR->getRequest().getMethod() << std::endl;
+    std::cout << "mapProxyRequest - URI: " << uri.toString() << std::endl;
+
+    // Break the uri into segments
+    uri.getPathSegments( pathStrs );
+
+    // Check for requests that need to be proxied to the 
+    // remote devices instead of being handled locally
+
+
+    // Check it this is a local request that the managment node should handle
+    for( std::vector< HNRestPath >::iterator it = m_proxyPathList.begin(); it != m_proxyPathList.end(); it++ )
+    {
+        std::cout << "Check handler: " << it->getOpID() << std::endl;
+        opData = it->checkForHandler( reqRR->getRequest().getMethod(), pathStrs );
+        if( opData != NULL )
+            return opData;
+    }
+
+    // Should return default error handler instead?
+    return NULL;
+}
+
+void 
+HNManagementDevice::handleLocalProxyRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData )
+{
+    //HNIDActionRequest action;
+
+    std::cout << "HNManagementDevice::handleLocalProxyRequest() - entry" << std::endl;
+    std::cout << "  dispatchID: " << opData->getDispatchID() << std::endl;
+    std::cout << "  opID: " << opData->getOpID() << std::endl;
+
+    std::string opID = opData->getOpID();
+
+    // GET "/hnode2/mgmt/status"
+    if( "getStatus" == opID )
+    {
+        std::ostream &msg = reqRR->getResponse().useLocalContentSource();
+        pjs::Object jsRoot;
+
+        jsRoot.set( "state", "enable" );
+        jsRoot.set( "test2", "00:00:00" );
+
+        // Render into a json string.
+        try {
+            pjs::Stringifier::stringify( jsRoot, msg );
+        } catch( ... ) {
+            // Send back not implemented
+            reqRR->getResponse().configAsInternalServerError();
+            return;
+        }
+
+        reqRR->getResponse().finalizeLocalContent();
+        reqRR->getResponse().setContentType("application/json");
+        reqRR->getResponse().setStatusCode(200);
+        reqRR->getResponse().setReason("OK");
+        return;
+    }
+
+    // Send back not implemented
+    reqRR->getResponse().configAsNotFound();
+    return;
+}
+
 const std::string g_HNode2MgmtRest = R"(
 {
   "openapi": "3.0.0",
@@ -436,9 +632,62 @@ const std::string g_HNode2MgmtRest = R"(
             }
           }
         }
-      },
+      }
   }
 }
 )";
 
-
+const std::string g_HNode2ProxyMgmtAPI = R"(
+{
+  "openapi": "3.0.0",
+  "info": {
+    "description": "",
+    "version": "1.0.0",
+    "title": ""
+  },
+  "paths": {
+      "/hnode2/mgmt/status": {
+        "get": {
+          "summary": "Get management node device status.",
+          "operationId": "getStatus",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        }
+      },
+      "/hnode2/mgmt/device-inventory": {
+        "get": {
+          "summary": "Get management node remote device inventory.",
+          "operationId": "getDeviceInventory",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        }
+      }      
+  }
+}
+)";

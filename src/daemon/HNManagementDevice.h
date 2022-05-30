@@ -45,6 +45,8 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
         
         HNSigSyncQueue         m_proxyRequestQueue;
 
+        std::vector< HNRestPath > m_proxyPathList;
+
         bool quit;
 
         void displayHelp();
@@ -52,6 +54,11 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
         HNMD_RESULT_T addSocketToEPoll( int sfd );
         HNMD_RESULT_T removeSocketFromEPoll( int sfd );
 
+        HNRestPath* addProxyPath( std::string dispatchID, std::string operationID, HNRestDispatchInterface *dispatchInf );
+        void registerProxyEndpointsFromOpenAPI( std::string openAPIJson );
+        HNOperationData* mapProxyRequest( HNProxyHTTPReqRsp *reqRR );
+        void handleLocalProxyRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData );
+        
     protected:
         
         // HNDevice REST callback

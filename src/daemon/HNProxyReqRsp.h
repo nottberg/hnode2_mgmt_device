@@ -5,6 +5,7 @@
 
 #include <string>
 #include <map>
+#include <sstream>
 
 namespace pn = Poco::Net;
 
@@ -27,7 +28,7 @@ class HNPRRContentSink
         virtual std::ostream& getSinkStreamRef() = 0;
 };
 
-class HNProxyHTTPMsg 
+class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
 {
     private:
         std::string m_uri;
@@ -46,6 +47,9 @@ class HNProxyHTTPMsg
         
         HNPRRContentSource  *m_cSource;
         HNPRRContentSink    *m_cSink;
+
+        std::stringstream    m_localContent;
+        uint                 m_contentMoved;
 
         void buildExtraHeaders( std::ostream &outStream );
 
@@ -69,6 +73,7 @@ class HNProxyHTTPMsg
 
         void configAsNotImplemented();
         void configAsNotFound();
+        void configAsInternalServerError();
 
         uint getStatusCode();
         std::string getReason();
@@ -86,7 +91,13 @@ class HNProxyHTTPMsg
         void setContentSource( HNPRRContentSource *source );
         void setContentSink( HNPRRContentSink *sink );
 
+        std::ostream& useLocalContentSource();
+        void finalizeLocalContent();
+
         HNPRR_RESULT_T xferContentChunk( uint maxChunkLength );
+
+        std::istream& getSourceStreamRef();
+        std::ostream& getSinkStreamRef();
 
         void debugPrint();
 };

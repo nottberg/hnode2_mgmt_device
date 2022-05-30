@@ -25,6 +25,7 @@ HNProxyHTTPMsg::clearHeaders()
     m_contentType.clear();
 
     m_contentLength = 0;
+    m_contentMoved  = 0;
 
     m_paramMap.clear();
 }
@@ -40,6 +41,11 @@ HNProxyHTTPMsg::addHdrPair( std::string name, std::string value )
         m_contentLength = strtol( value.c_str(), NULL, 0);
         return;
     }
+    else if( Poco::icompare( name, "CONTENT_LENGTH" ) == 0 )
+    {
+        m_contentLength = strtol( value.c_str(), NULL, 0);
+        return;
+    }
     else if( Poco::icompare( name, "Status") == 0 )
     {
         m_statusCode = strtol( value.c_str(), NULL, 0);
@@ -48,6 +54,21 @@ HNProxyHTTPMsg::addHdrPair( std::string name, std::string value )
     else if( Poco::icompare( name, "Content-Type") == 0 )
     {
         m_contentType = value;
+        return;
+    }
+    else if( Poco::icompare( name, "CONTENT_TYPE") == 0 )
+    {
+        m_contentType = value;
+        return;
+    }
+    else if( Poco::icompare( name, "REQUEST_URI") == 0 )
+    {
+        m_uri = value;
+        return;
+    }
+    else if( Poco::icompare( name, "REQUEST_METHOD") == 0 )
+    {
+        m_method = value;
         return;
     }
 
@@ -122,6 +143,7 @@ void
 HNProxyHTTPMsg::setContentLength( uint length )
 {
     m_contentLength = length;
+    m_contentMoved  = 0;
 }
 
 void 
@@ -141,6 +163,16 @@ HNProxyHTTPMsg::configAsNotFound()
 
     setStatusCode( 404 );
     setReason("Not Found");
+    setContentLength( 0 );
+}
+
+void 
+HNProxyHTTPMsg::configAsInternalServerError()
+{
+    clearHeaders();
+
+    setStatusCode( 500 );
+    setReason("Internal Server Error");
     setContentLength( 0 );
 }
 
@@ -223,10 +255,65 @@ HNProxyHTTPMsg::setContentSink( HNPRRContentSink *sink )
     m_cSink = sink;
 }
 
+std::ostream&
+HNProxyHTTPMsg::useLocalContentSource()
+{
+    m_localContent.clear();
+    setContentSource( this );
+    return m_localContent; 
+}
+
+void
+HNProxyHTTPMsg::finalizeLocalContent()
+{
+    uint size = m_localContent.tellp();
+    std::cout << "finalizeLocalContent: " << size << std::endl;
+    setContentLength(size);
+}
+
 HNPRR_RESULT_T 
 HNProxyHTTPMsg::xferContentChunk( uint maxChunkLength )
 {
-    return HNPRR_RESULT_FAILURE;
+    char buff[4096];
+
+    if( (m_cSource == NULL) || (m_cSink == NULL) )
+        return HNPRR_RESULT_FAILURE;
+
+    if( m_contentMoved >= m_contentLength )
+        return HNPRR_RESULT_RESPONSE_COMPLETE;
+
+    std::istream &is = m_cSource->getSourceStreamRef();
+    std::ostream &os = m_cSink->getSinkStreamRef();
+
+    uint bytesToMove = m_contentLength - m_contentMoved;
+    if( bytesToMove > sizeof(buff) )
+        bytesToMove = sizeof(buff);
+
+    is.read( buff, bytesToMove );
+    os.write( buff, bytesToMove );
+ 
+    std::cout << "xferContentChunk - bytesToMove: " << bytesToMove << std::endl;
+
+    m_contentMoved += bytesToMove;
+
+    if( m_contentMoved < m_contentLength )
+        return HNPRR_RESULT_RESPONSE_CONTENT;
+ 
+    os.flush();
+
+    return HNPRR_RESULT_RESPONSE_COMPLETE;
+}
+
+std::istream& 
+HNProxyHTTPMsg::getSourceStreamRef()
+{
+    return m_localContent;
+}
+
+std::ostream& 
+HNProxyHTTPMsg::getSinkStreamRef()
+{
+    return m_localContent;
 }
 
 void 

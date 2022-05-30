@@ -947,12 +947,13 @@ HNSCGISink::runSCGILoop()
 
                     HNPRR_RESULT_T status = response->getResponse().sendHeaders();
 
-                    if( status == HNPRR_RESULT_RESPONSE_COMPLETE )
+                    while( status == HNPRR_RESULT_RESPONSE_CONTENT )
                     {
-                        it->second->finish();
-                        m_clientMap.erase(it);
-                        continue;    
+                        status = response->getResponse().xferContentChunk( 4096 );
                     }
+
+                    it->second->finish();
+                    m_clientMap.erase(it);
                 }
             }           
             else
