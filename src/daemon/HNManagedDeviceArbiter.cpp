@@ -1,11 +1,155 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <regex>
 
 #include "Poco/Thread.h"
 #include "Poco/Runnable.h"
+#include "Poco/Net/IPAddress.h"
+#include "Poco/Net/NetException.h"
 
 #include "HNManagedDeviceArbiter.h"
+
+namespace pns = Poco::Net;
+
+HNMDARAddress::HNMDARAddress()
+{
+    m_type = HMDAR_ADDRTYPE_NOTSET;
+}
+
+HNMDARAddress::~HNMDARAddress()
+{
+
+}
+
+void 
+HNMDARAddress::setAddressInfo( std::string dnsName, std::string address, uint16_t port )
+{
+    m_dnsName = dnsName;
+    m_address = address;
+    m_port = port;
+
+    // Use Poco to do IPAddress validation, etc.
+    try 
+    {
+        pns::IPAddress trialAddr( address );
+
+        switch( trialAddr.family() )
+        {
+            case pns::AddressFamily::IPv4:
+                if( trialAddr.isLoopback() )
+                {
+                    m_type = HNDAR_ADDRTYPE_LOOPBACK_IPV4;
+                    return;
+                }
+                else if( trialAddr.isMulticast() || trialAddr.isBroadcast() )
+                {
+                    m_type = HNDAR_ADDRTYPE_CAST_IPV4;
+                    return;
+                }
+                else if( trialAddr.isLinkLocal() || trialAddr.isSiteLocal() )
+                {
+                    m_type = HMDAR_ADDRTYPE_IPV4;
+                    return;
+                }
+                else
+                {
+                    m_type = HNDAR_ADDRTYPE_INET_IPV4;
+                    return;
+                }
+            break;
+
+            case pns::AddressFamily::IPv6:
+                if( trialAddr.isLoopback() )
+                {
+                    m_type = HNDAR_ADDRTYPE_LOOPBACK_IPV6;
+                    return;
+                }
+                else if( trialAddr.isMulticast() || trialAddr.isBroadcast() )
+                {
+                    m_type = HNDAR_ADDRTYPE_CAST_IPV6;
+                    return;
+                }
+                else if( trialAddr.isLinkLocal() || trialAddr.isSiteLocal() )
+                {
+                    m_type = HMDAR_ADDRTYPE_IPV6;
+                    return;
+                }
+                else
+                {
+                    m_type = HNDAR_ADDRTYPE_INET_IPV6;
+                    return;
+                }
+            break;
+        }
+    } 
+    catch( pns::InvalidAddressException ex )
+    {
+    }
+
+    // Could not parse the address string
+    m_type = HMDAR_ADDRTYPE_UNKNOWN;
+    return;
+}
+
+HMDAR_ADDRTYPE_T
+HNMDARAddress::getType()
+{
+    return m_type;
+}
+
+const char* gHNMDARAddressTypeStrings[] =
+{
+   "not-set",       // HMDAR_ADDRTYPE_NOTSET,
+   "unknown",       // HMDAR_ADDRTYPE_UNKNOWN,
+   "ipv4",          // HMDAR_ADDRTYPE_IPV4,
+   "loopback_ipv4", // HNDAR_ADDRTYPE_LOOPBACK_IPV4,
+   "cast_ipv4",     // HNDAR_ADDRTYPE_CAST_IPV4,
+   "inet_ipv4",     // HNDAR_ADDRTYPE_INET_IPV4,
+   "ipv6",          // HMDAR_ADDRTYPE_IPV6,
+   "loopback_ipv6", // HNDAR_ADDRTYPE_LOOPBACK_IPV6,
+   "cast_ipv6",     // HNDAR_ADDRTYPE_CAST_IPV6,
+   "inet_ipv6"      // HNDAR_ADDRTYPE_INET_IPV6 
+};
+
+std::string
+HNMDARAddress::getTypeAsStr()
+{
+    return gHNMDARAddressTypeStrings[ m_type ];
+}
+
+std::string
+HNMDARAddress::getDNSName()
+{
+    return m_dnsName;
+}
+
+std::string
+HNMDARAddress::getAddress()
+{
+    return m_address;
+}
+
+uint16_t
+HNMDARAddress::getPort()
+{
+    return m_port;
+}
+
+std::string
+HNMDARAddress::getURL( std::string protocol, std::string path )
+{
+    std::string url;
+
+    return url;
+}
+
+void 
+HNMDARAddress::debugPrint( uint offset )
+{
+    offset += 2;
+    printf( "%*.*stype: %s  address: %s  port: %u  dnsName: %s\n", offset, offset, " ", getTypeAsStr().c_str(), m_address.c_str(), m_port, m_dnsName.c_str() );
+}
 
 // Helper class for running HNManagedDeviceArbiter 
 // monitoring loop as an independent thread
@@ -126,21 +270,30 @@ HNMDARecord::setName( std::string value )
 }
 
 void 
-HNMDARecord::setBaseIPv4URL( std::string value )
+HNMDARecord::addAddressInfo( std::string dnsName, std::string address, uint16_t port )
 {
-    baseIPv4URL = value;
+    for( std::vector< HNMDARAddress >::iterator it = m_addrList.begin(); it != m_addrList.end(); it++ )
+    {
+        // Check if we are updating and address we already know about.
+        if( it->getAddress() == address )
+        {
+            it->setAddressInfo( dnsName, address, port );
+            return;
+        }
+    }
+
+    HNMDARAddress newAddr;
+    newAddr.setAddressInfo( dnsName, address, port );
+    m_addrList.push_back( newAddr );
 }
 
 void 
-HNMDARecord::setBaseIPv6URL( std::string value )
+HNMDARecord::getAddressList( std::vector< HNMDARAddress > &addrList )
 {
-    baseIPv6URL = value;
-}
-
-void
-HNMDARecord::setBaseSelfURL( std::string value )
-{
-    baseSelfURL = value;
+    for( std::vector< HNMDARAddress >::iterator it = m_addrList.begin(); it != m_addrList.end(); it++ )
+    {
+        addrList.push_back( *it );
+    }
 }
 
 std::string 
@@ -176,27 +329,28 @@ HNMDARecord::getName()
 }
 
 std::string 
-HNMDARecord::getBaseIPv4URL()
-{
-    return baseIPv4URL;
-}
-
-std::string 
-HNMDARecord::getBaseIPv6URL()
-{
-    return baseIPv6URL;
-}
-
-std::string
-HNMDARecord::getBaseSelfURL()
-{
-    return baseSelfURL;
-}
-
-std::string 
 HNMDARecord::getCRC32ID()
 {
     return hnodeID.getCRC32AsHexStr();
+}
+
+HNMDL_RESULT_T 
+HNMDARecord::updateRecord( HNMDARecord &newRecord )
+{   
+    setDiscoveryID( newRecord.getDiscoveryID() );
+    setDeviceType( newRecord.getDeviceType() );
+    setDeviceVersion( newRecord.getDeviceVersion() );
+    setHNodeIDFromStr( newRecord.getHNodeIDStr() );
+    setName( newRecord.getName() );
+ 
+    std::vector< HNMDARAddress > newAddrList;
+    newRecord.getAddressList( newAddrList );
+    for( std::vector< HNMDARAddress >::iterator it = newAddrList.begin(); it != newAddrList.end(); it++ )
+    {
+        addAddressInfo( it->getDNSName(), it->getAddress(), it->getPort() );
+    }
+
+    return HNMDL_RESULT_SUCCESS;
 }
 
 void 
@@ -210,6 +364,11 @@ HNMDARecord::debugPrint( uint offset )
     printf( "%*.*sdeviceType: %s (version: %s)\n", offset, offset, " ", getDeviceType().c_str(), getDeviceVersion().c_str() );
     printf( "%*.*sdiscID: %s\n", offset, offset, " ", getDiscoveryID().c_str() );
  
+    for( std::vector< HNMDARAddress >::iterator it = m_addrList.begin(); it != m_addrList.end(); it++ )
+    {
+        it->debugPrint(offset);
+    }
+
 #if 0
         std::string discID;
         HNodeID     hnodeID;
@@ -250,9 +409,8 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
     }
     else
     {
-        // This is an existing record
-        // Check if updates are appropriate.
-
+        // Update the existing record with most recent information
+        it->second.updateRecord( record );
     }
 
     return HNMDL_RESULT_SUCCESS;
@@ -263,6 +421,15 @@ HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
 {
 
     return HNMDL_RESULT_SUCCESS;
+}
+
+void
+HNManagedDeviceArbiter::getDeviceListCopy( std::vector< HNMDARecord > &deviceList )
+{
+    for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
+    {    
+        deviceList.push_back( it->second );
+    }
 }
 
 void 

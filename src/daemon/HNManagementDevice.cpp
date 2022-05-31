@@ -230,9 +230,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                             notifyRec.setHNodeIDFromStr( event->getTxtValue( "hnodeID" ) );
                             notifyRec.setName( event->getTxtValue( "name" ) );
 
-                            //void setBaseIPv4URL( std::string value );
-                            //void setBaseIPv6URL( std::string value );
-                            //void setBaseSelfURL( std::string value );
+                            notifyRec.addAddressInfo( event->getHostname(), event->getAddress(), event->getPort() );
 
                             HNMDL_RESULT_T result = arbiter.notifyDiscoverAdd( notifyRec );
                             if( result != HNMDL_RESULT_SUCCESS )
@@ -581,6 +579,62 @@ HNManagementDevice::handleLocalProxyRequest( HNProxyHTTPReqRsp *reqRR, HNOperati
 
         jsRoot.set( "state", "enable" );
         jsRoot.set( "test2", "00:00:00" );
+
+        // Render into a json string.
+        try {
+            pjs::Stringifier::stringify( jsRoot, msg );
+        } catch( ... ) {
+            // Send back not implemented
+            reqRR->getResponse().configAsInternalServerError();
+            return;
+        }
+
+        reqRR->getResponse().finalizeLocalContent();
+        reqRR->getResponse().setContentType("application/json");
+        reqRR->getResponse().setStatusCode(200);
+        reqRR->getResponse().setReason("OK");
+        return;
+    }
+    else if( "getDeviceInventory" == opID )
+    {
+        std::ostream &msg = reqRR->getResponse().useLocalContentSource();
+        pjs::Object jsRoot;
+        pjs::Array jsDevArray;
+
+        std::vector< HNMDARecord > deviceList;
+        arbiter.getDeviceListCopy( deviceList );
+        for( std::vector< HNMDARecord >::iterator dit = deviceList.begin(); dit != deviceList.end(); dit++ )
+        {
+            pjs::Object jsDevice;
+            pjs::Array  jsAddrArray;
+
+            jsDevice.set( "name", dit->getName() );
+            jsDevice.set( "hnodeID", dit->getHNodeIDStr() );
+            jsDevice.set( "deviceType", dit->getDeviceType() );
+            jsDevice.set( "deviceVersion", dit->getDeviceVersion() );
+            jsDevice.set( "discID", dit->getDiscoveryID() );
+            jsDevice.set( "crc32ID", dit->getCRC32ID() );
+
+            std::vector< HNMDARAddress > addrList;
+            dit->getAddressList( addrList );
+            for( std::vector< HNMDARAddress >::iterator ait = addrList.begin(); ait != addrList.end(); ait++ )
+            {
+                pjs::Object jsAddress;
+
+                jsAddress.set( "type", ait->getTypeAsStr() );
+                jsAddress.set( "dnsName", ait->getDNSName() );
+                jsAddress.set( "address", ait->getAddress() );
+                jsAddress.set( "port", ait->getPort() );
+
+                jsAddrArray.add( jsAddress );
+            }
+
+            jsDevice.set( "addresses", jsAddrArray );
+
+            jsDevArray.add( jsDevice );
+        }
+
+        jsRoot.set( "devices", jsDevArray );
 
         // Render into a json string.
         try {

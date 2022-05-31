@@ -27,6 +27,46 @@ typedef enum HNManagedDeviceListResultEnum
     HNMDL_RESULT_FAILURE
 }HNMDL_RESULT_T;
 
+typedef enum HNMDARAddressTypeEnum
+{
+    HMDAR_ADDRTYPE_NOTSET,
+    HMDAR_ADDRTYPE_UNKNOWN,
+    HMDAR_ADDRTYPE_IPV4,
+    HNDAR_ADDRTYPE_LOOPBACK_IPV4,
+    HNDAR_ADDRTYPE_CAST_IPV4,
+    HNDAR_ADDRTYPE_INET_IPV4,
+    HMDAR_ADDRTYPE_IPV6,
+    HNDAR_ADDRTYPE_LOOPBACK_IPV6,
+    HNDAR_ADDRTYPE_CAST_IPV6,
+    HNDAR_ADDRTYPE_INET_IPV6 
+}HMDAR_ADDRTYPE_T;
+
+class HNMDARAddress
+{
+    private:
+        HMDAR_ADDRTYPE_T   m_type;
+        std::string        m_dnsName;
+        std::string        m_address;
+        uint16_t           m_port;
+
+    public:
+        HNMDARAddress();
+       ~HNMDARAddress();
+
+        void setAddressInfo( std::string dnsName, std::string address, uint16_t port );
+
+        HMDAR_ADDRTYPE_T  getType();
+        std::string getTypeAsStr();
+
+        std::string getDNSName();
+        std::string getAddress();
+        uint16_t    getPort();
+
+        std::string getURL( std::string protocol, std::string path );
+
+        void debugPrint( uint offset );
+};
+
 class HNMDARecord
 {
     private:
@@ -39,9 +79,7 @@ class HNMDARecord
         std::string devVersion;
         std::string name;
 
-        std::string baseIPv4URL;
-        std::string baseIPv6URL;
-        std::string baseSelfURL;
+        std::vector< HNMDARAddress > m_addrList;
 
     public:
         HNMDARecord();
@@ -56,10 +94,8 @@ class HNMDARecord
         void setHNodeIDFromStr( std::string value );
         void setName( std::string value );
 
-        void setBaseIPv4URL( std::string value );
-        void setBaseIPv6URL( std::string value );
-        void setBaseSelfURL( std::string value );
-      
+        void addAddressInfo( std::string dnsName, std::string address, uint16_t port );
+     
         HNMDR_DISC_STATE_T  getDiscoveryState();
         std::string getDiscoveryStateStr();
 
@@ -71,10 +107,11 @@ class HNMDARecord
         std::string getDeviceVersion();
         std::string getHNodeIDStr();
         std::string getName();
-        std::string getBaseIPv4URL();
-        std::string getBaseIPv6URL();
-        std::string getBaseSelfURL();
         std::string getCRC32ID();
+
+        void getAddressList( std::vector< HNMDARAddress > &addrList );
+
+        HNMDL_RESULT_T updateRecord( HNMDARecord &newRecord );
 
         void debugPrint( uint offset );
 };
@@ -105,6 +142,8 @@ class HNManagedDeviceArbiter
 
         void start();
         void shutdown();
+
+        void getDeviceListCopy( std::vector< HNMDARecord > &deviceList );
 
         void debugPrint();
 
