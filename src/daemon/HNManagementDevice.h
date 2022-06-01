@@ -15,6 +15,7 @@
 
 #include "HNSCGISink.h"
 #include "HNManagedDeviceArbiter.h"
+#include "HNMgmtProxy.h"
 
 #define MAXEVENTS  8
 
@@ -42,8 +43,11 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
 
         HNManagedDeviceArbiter arbiter;
         HNSCGISink             reqsink;
+        HNProxySequencer       m_proxySeq;
         
-        HNSigSyncQueue         m_proxyRequestQueue;
+        HNSigSyncQueue         m_scgiRequestQueue;
+
+        HNSigSyncQueue         m_proxyResponseQueue;
 
         std::vector< HNRestPath > m_proxyPathList;
 
@@ -56,9 +60,10 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
 
         HNRestPath* addProxyPath( std::string dispatchID, std::string operationID, HNRestDispatchInterface *dispatchInf );
         void registerProxyEndpointsFromOpenAPI( std::string openAPIJson );
+        HNProxyTicket* checkForProxyRequest( HNProxyHTTPReqRsp *reqRR );
         HNOperationData* mapProxyRequest( HNProxyHTTPReqRsp *reqRR );
-        void handleLocalProxyRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData );
-        
+        void handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData );
+
     protected:
         
         // HNDevice REST callback

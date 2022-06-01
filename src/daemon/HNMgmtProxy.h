@@ -1,73 +1,88 @@
 #ifndef __HN_MGMT_PROXY_H__
 #define __HN_MGMT_PROXY_H__
 
+#include <sys/epoll.h>
+
+#include <string>
+#include <map>
+#include <list>
+#include <fstream>
 #include <string>
 #include <vector>
 
 //#include "Poco/Net/HTTPServer.h"
-#include "Poco/Net/HTTPRequestHandler.h"
+//#include "Poco/Net/HTTPRequestHandler.h"
 //#include "Poco/Net/HTTPRequestHandlerFactory.h"
 //#include "Poco/Net/HTTPServerParams.h"
-#include "Poco/Net/HTTPServerRequest.h"
-#include "Poco/Net/HTTPServerResponse.h"
+//#include "Poco/Net/HTTPServerRequest.h"
+//#include "Poco/Net/HTTPServerResponse.h"
 //#include "Poco/Net/ServerSocket.h"
-#include "Poco/URI.h"
-#include "Poco/String.h"
-#include <Poco/JSON/Object.h>
-#include <Poco/JSON/Parser.h>
+//#include "Poco/URI.h"
+//#include "Poco/String.h"
+//#include <Poco/JSON/Object.h>
+//#include <Poco/JSON/Parser.h>
 
-#include <hnode2/HNRestHandler.h>
+#include <hnode2/HNSigSyncQueue.h>
 
-namespace pjs = Poco::JSON;
-namespace pdy = Poco::Dynamic;
-namespace pn = Poco::Net;
+#include "HNProxyReqRsp.h"
 
-#if 0
-// Define these locally so it is not in the header file.
-class HNProxyHandler: public pn::HTTPRequestHandler
+//namespace pjs = Poco::JSON;
+//namespace pdy = Poco::Dynamic;
+//namespace pn = Poco::Net;
+
+typedef enum HNProxySequencerResultEnum
 {
-    private:
-        HNOperationData *m_opData;
+    HNPS_RESULT_SUCCESS,
+    HNPS_RESULT_FAILURE
+}HNPS_RESULT_T;
 
-    public:
-        HNProxyHandler( HNOperationData *operationData );
-       ~HNProxyHandler();
-
-        void handleRequest( pn::HTTPServerRequest& request, pn::HTTPServerResponse& response );
-};
-
-class HNProxyHandlerFactory
+// A class to track the progress of a proxy request
+class HNProxyTicket
 {
     public:
-        HNProxyHandlerFactory();
-
-        HNRestPath *addPath( std::string dispatchID, std::string operationID, HNRestDispatchInterface *dispatchInf );
-
-        HNProxyHandler *createRequestHandler( const HNProxyRequest &request );
-        
-        //pn::HTTPRequestHandler* createRequestHandler( const pn::HTTPServerRequest& request );
+        HNProxyTicket( HNProxyHTTPReqRsp *parentRR );
+       ~HNProxyTicket();
 
     private:
-        std::vector< HNRestPath > pathList;
+        HNProxyHTTPReqRsp  *m_parentRR;
 };
 
-class HNMgmtProxy
+// Perform the proxy request operations
+class HNProxySequencer
 {
     public:
-        HNMgmtProxy();
-       ~HNMgmtProxy();
+        HNProxySequencer();
+       ~HNProxySequencer();
 
-        void registerEndpointsFromOpenAPI( std::string dispatchID, HNRestDispatchInterface *dispatchInf, std::string openAPIJson );
-        void registerProxyEndpoint( std::string dispatchID, HNRestDispatchInterface *dispatchInf, std::string opID, std::string rootURI );        
+        void setParentResponseQueue( HNSigSyncQueue *parentResponseQueue );
+        HNSigSyncQueue* getRequestQueue();
 
-        void startRequest( HNProxyRequest *reqObj, HNProxyResponse *rspObj );
+        void start();
+        void runProxySequencerLoop();
+        void shutdown();
+        void killProxySequencerLoop();
+
+        HNPS_RESULT_T addSocketToEPoll( int sfd );
+        HNPS_RESULT_T removeSocketFromEPoll( int sfd );
+
+        HNPS_RESULT_T makeProxyRequest( HNProxyTicket *request );
 
     private:
+            // The thread helper
+        void *m_thelp;
 
-        HNProxyHandlerFactory m_factory;
+        // Should the monitor still be running.
+        bool m_runMonitor;
 
-        //void *m_srvPtr;
+        int m_epollFD;
+        int m_acceptFD;
+    
+        struct epoll_event m_event;
+        struct epoll_event *m_events;
+
+        HNSigSyncQueue  m_requestQueue;
+
+        HNSigSyncQueue *m_responseQueue;
 };
-#endif
 
 #endif // __HN_MGMT_PROXY_H__

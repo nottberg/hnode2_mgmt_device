@@ -128,10 +128,15 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     // Setup the decoder for proxy requests that will be handled locally.
     registerProxyEndpointsFromOpenAPI( g_HNode2ProxyMgmtAPI );
 
-    // Setup the queue for proxy requests from the SCGI interface
-    m_proxyRequestQueue.init();
+    // Setup the queue for requests from the SCGI interface
+    m_scgiRequestQueue.init();
 
-    reqsink.setParentRequestQueue( &m_proxyRequestQueue );
+    reqsink.setParentRequestQueue( &m_scgiRequestQueue );
+
+    // Setup the queue for responses from the Proxy interface
+    m_proxyResponseQueue.init();
+
+    m_proxySeq.setParentResponseQueue( &m_proxyResponseQueue );
 
     // Initialize for event loop
     epollFD = epoll_create1( 0 );
@@ -156,6 +161,9 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     // Start the AvahiBrowser component
     avBrowser.start();
 
+    // Start the proxy sequencer
+    m_proxySeq.start();
+
     // Hook the browser into the event loop
     int discoverFD = avBrowser.getEventQueue().getEventFD();
    
@@ -164,8 +172,16 @@ HNManagementDevice::main( const std::vector<std::string>& args )
         return Application::EXIT_SOFTWARE;
     }
 
-    // Hook the Proxy Request Queue into the event loop
-    int proxyQFD = m_proxyRequestQueue.getEventFD();
+    // Hook the SCGI Request Queue into the event loop
+    int scgiQFD = m_scgiRequestQueue.getEventFD();
+   
+    if( addSocketToEPoll( scgiQFD ) !=  HNMD_RESULT_SUCCESS )
+    {
+        return Application::EXIT_SOFTWARE;
+    }
+
+    // Hook the Proxy Sequencer Response Queue into the event loop
+    int proxyQFD = m_proxyResponseQueue.getEventFD();
    
     if( addSocketToEPoll( proxyQFD ) !=  HNMD_RESULT_SUCCESS )
     {
@@ -249,13 +265,22 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                     avBrowser.getEventQueue().releaseRecord( event );
                 }
             }
-            else if( proxyQFD == events[i].data.fd )
+            else if( scgiQFD == events[i].data.fd )
             {
-                while( m_proxyRequestQueue.getPostedCnt() )
+                while( m_scgiRequestQueue.getPostedCnt() )
                 {
-                    HNProxyHTTPReqRsp *proxyRR = (HNProxyHTTPReqRsp *) m_proxyRequestQueue.aquireRecord();
+                    HNProxyHTTPReqRsp *proxyRR = (HNProxyHTTPReqRsp *) m_scgiRequestQueue.aquireRecord();
 
                     std::cout << "HNManagementDevice::Received proxy request" << std::endl;
+
+                    HNProxyTicket *proxyTicket = checkForProxyRequest( proxyRR );
+
+                    if( proxyTicket )
+                    {
+                        std::cout << "Proxy request to device: " << std::endl;
+                        m_proxySeq.getRequestQueue()->postRecord( proxyTicket );
+                        continue;
+                    }
 
                     HNOperationData *opData = mapProxyRequest( proxyRR );
 
@@ -266,17 +291,28 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                     }
                     else
                     {
-                        std::cout << "Local proxy request: " << opData->getOpID() << std::endl;
-                        handleLocalProxyRequest( proxyRR, opData );
+                        std::cout << "Local management device request: " << opData->getOpID() << std::endl;
+                        handleLocalSCGIRequest( proxyRR, opData );
                         reqsink.getProxyResponseQueue()->postRecord( proxyRR );
                     }
 
                     delete opData;
                 }
             }
+            else if( proxyQFD == events[i].data.fd )
+            {
+                while( m_proxyResponseQueue.getPostedCnt() )
+                {
+                    HNProxyTicket *proxyTicket = (HNProxyTicket *) m_proxyResponseQueue.aquireRecord();
+
+                    std::cout << "HNManagementDevice::Received proxy response" << std::endl;
+
+                }
+            }            
         }
     }
 
+    m_proxySeq.shutdown();
     avBrowser.shutdown();
     reqsink.shutdown();
     arbiter.shutdown();
@@ -529,6 +565,13 @@ HNManagementDevice::registerProxyEndpointsFromOpenAPI( std::string openAPIJson )
     }
 }
 
+HNProxyTicket* 
+HNManagementDevice::checkForProxyRequest( HNProxyHTTPReqRsp *reqRR )
+{
+    return new HNProxyTicket( reqRR );
+    //return NULL;
+}
+
 HNOperationData*
 HNManagementDevice::mapProxyRequest( HNProxyHTTPReqRsp *reqRR )
 {
@@ -561,7 +604,7 @@ HNManagementDevice::mapProxyRequest( HNProxyHTTPReqRsp *reqRR )
 }
 
 void 
-HNManagementDevice::handleLocalProxyRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData )
+HNManagementDevice::handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData )
 {
     //HNIDActionRequest action;
 

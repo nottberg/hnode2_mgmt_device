@@ -1,300 +1,264 @@
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <sys/un.h>
+#include <sys/socket.h>
 
+#include <syslog.h>
 
+#include <iostream>
+#include <sstream>
 
+#include "Poco/Thread.h"
+#include "Poco/Runnable.h"
+#include <Poco/StreamCopier.h>
+#include "Poco/Net/HTTPClientSession.h"
+#include "Poco/Net/HTTPRequest.h"
+#include "Poco/Net/HTTPResponse.h"
+#include "Poco/URI.h"
 
-#include "HNProxyReqRsp.h"
 #include "HNMgmtProxy.h"
 
-#if 0
+namespace pn  = Poco::Net;
 
-HNProxyHandler::HNProxyHandler( HNOperationData *operationData )
-:m_opData( operationData )
+#define MAXEVENTS  8
+
+
+HNProxyTicket::HNProxyTicket( HNProxyHTTPReqRsp *parentRR )
+{
+    m_parentRR = parentRR;
+}
+
+HNProxyTicket::~HNProxyTicket()
 {
 
 }
 
-HNProxyHandler::~HNProxyHandler()
+// Helper class for running HNSCGISink  
+// proxy loop as an independent thread
+class HNProxySequencerRunner : public Poco::Runnable
 {
-    std::cout << "HNRestHandler - deconstruct" << std::endl;
-    delete m_opData;
+    private:
+        Poco::Thread      m_thread;
+        HNProxySequencer *m_abObj;
+
+    public:  
+        HNProxySequencerRunner( HNProxySequencer *value )
+        {
+            m_abObj = value;
+        }
+
+        void startThread()
+        {
+            m_thread.start( *this );
+        }
+
+        void killThread()
+        {
+            m_abObj->killProxySequencerLoop();
+            m_thread.join();
+        }
+
+        virtual void run()
+        {
+            m_abObj->runProxySequencerLoop();
+        }
+
+};
+
+
+HNProxySequencer::HNProxySequencer()
+{
+
+}
+
+HNProxySequencer::~HNProxySequencer()
+{
+
+}
+
+void 
+HNProxySequencer::setParentResponseQueue( HNSigSyncQueue *parentResponseQueue )
+{
+    m_responseQueue = parentResponseQueue;
+}
+
+HNSigSyncQueue* 
+HNProxySequencer::getRequestQueue()
+{
+    return &m_requestQueue;
 }
 
 void
-HNProxyHandler::handleRequest( pn::HTTPServerRequest& request, pn::HTTPServerResponse& response )
+HNProxySequencer::start()
 {
-    m_opData->setReqRsp( &request, &response );
-    m_opData->restDispatch();
-}
+    int error;
 
-HNProxyHandlerFactory::HNProxyHandlerFactory()
-{
+    std::cout << "HNProxySequencer::start()" << std::endl;
 
-}
-
-HNRestPath *
-HNProxyHandlerFactory::addPath( std::string dispatchID, std::string operationID, HNRestDispatchInterface *dispatchInf )
-{
-    HNRestPath newPath;
-    HNRestPath *pathPtr;
-
-    // Add new element
-    pathList.push_back( newPath );
-
-    // Get pointer
-    pathPtr = &pathList.back();
-    
-    pathPtr->init( dispatchID, operationID, dispatchInf );
-
-    return pathPtr;
-}
-
-HNProxyHandler *
-HNProxyHandlerFactory::createRequestHandler( const HNProxyRequest &request )
-{
-    HNOperationData *opData = NULL;
-    std::vector< std::string > pathStrs;
-
-    Poco::URI uri( request.getURI() );    
-
-    //if (request.getURI() == "/")
-    //    return new HNodeRestHandler();
-    //else
-
-    //std::cout << "Server Request method: " << request.getMethod() << std::endl;
-    //std::cout << "Server Request URI: " << uri.toString() << std::endl;
-
-    uri.getPathSegments( pathStrs );
-
-    for( std::vector< HNRestPath >::iterator it = pathList.begin(); it != pathList.end(); it++ )
+    // Allocate the thread helper
+    m_thelp = new HNProxySequencerRunner( this );
+    if( !m_thelp )
     {
-        //std::cout << "Check handler: " << it->getOpID() << std::endl;
-        opData = it->checkForHandler( request.getMethod(), pathStrs );
-        if( opData != NULL )
-            return new HNProxyHandler( opData );
-    }
-
-    // Should return default error handler instead?
-    return NULL;
-}
-
-#if 0
-pn::HTTPRequestHandler* 
-HNRestHandlerFactory::createRequestHandler( const pn::HTTPServerRequest& request )
-{
-    HNOperationData *opData = NULL;
-    std::vector< std::string > pathStrs;
-
-    Poco::URI uri( request.getURI() );    
-
-    //if (request.getURI() == "/")
-    //    return new HNodeRestHandler();
-    //else
-
-    //std::cout << "Server Request method: " << request.getMethod() << std::endl;
-    //std::cout << "Server Request URI: " << uri.toString() << std::endl;
-
-    uri.getPathSegments( pathStrs );
-
-    for( std::vector< HNRestPath >::iterator it = pathList.begin(); it != pathList.end(); it++ )
-    {
-        //std::cout << "Check handler: " << it->getOpID() << std::endl;
-        opData = it->checkForHandler( request.getMethod(), pathStrs );
-        if( opData != NULL )
-            return new HNRestHandler( opData );
-    }
-
-    // Should return default error handler instead?
-    return NULL;
-}
-#endif
-
-
-
-
-
-HNMgmtProxy::HNMgmtProxy()
-{
-
-}
-
-HNMgmtProxy::~HNMgmtProxy()
-{
-
-}
-
-void 
-HNMgmtProxy::registerEndpointsFromOpenAPI( std::string dispatchID, HNRestDispatchInterface *dispatchInf, std::string openAPIJson )
-{
-    HNRestPath *path;
-
-    // Invoke the json parser
-    try
-    {
-        // Attempt to parse the provided openAPI input
-        pjs::Parser parser;
-        pdy::Var varRoot = parser.parse( openAPIJson );
-
-        // Get a pointer to the root object
-        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
-
-        // Make sure the "paths" field exists, otherwise nothing to do
-        if( jsRoot->isObject( "paths" ) == false )
-            return;
-
-        // Extract the paths object
-        pjs::Object::Ptr jsPathList = jsRoot->getObject( "paths" );
-
-        // Iterate through the fields, each field represents a path
-        for( pjs::Object::ConstIterator pit = jsPathList->begin(); pit != jsPathList->end(); pit++ )
-        {
-            std::vector< std::string > pathStrs;
-
-            // Parse the extracted uri
-            Poco::URI uri( pit->first );
-
-            // Break it into tokens by '/'
-            uri.getPathSegments( pathStrs );
-
-            std::cout << "regend - uri: " << uri.toString() << std::endl;
-            std::cout << "regend - segcnt: " << pathStrs.size() << std::endl;
-
-            // Turn the iterator into a object pointer
-            pjs::Object::Ptr jsPath = pit->second.extract< pjs::Object::Ptr >();
-
-            // Iterate through the fields, each field represents a supported HTTP Method
-            for( pjs::Object::ConstIterator mit = jsPath->begin(); mit != jsPath->end(); mit++ )
-            {
-                std::cout << "regend - method: " << mit->first << std::endl;
-
-                // Get a pointer to the method object
-                pjs::Object::Ptr jsMethod = mit->second.extract< pjs::Object::Ptr >();
-
-                // The method object must contain a operationID field
-                // which will be used by the dispatch Callback to know
-                // the request that was made.
-                std::string opID = jsMethod->getValue< std::string >( "operationId" );
-                std::cout << "regend - opID: " << opID << std::endl;
-
-                // We have everything we need so now the new path can be added to the 
-                // http factory class
-                path = m_factory.addPath( dispatchID, opID,  dispatchInf );
-
-                // Record the method for this specific path record
-                path->setMethod( mit->first );
-
-                // Build up the path element array, taking into account url based parameters
-                for( std::vector< std::string >::iterator sit = pathStrs.begin(); sit != pathStrs.end(); sit++ )
-                {
-                    std::cout << "PathComp: " << *sit << std::endl;
-                    // Check if this is a parameter or a regular path element.
-                    if( (sit->front() == '{') && (sit->back() == '}') )
-                    {
-                        // Add a parameter capture
-                        std::string paramName( (sit->begin() + 1), (sit->end() - 1) );
-                        std::cout << "regend - paramName: " << paramName << std::endl;
-                        path->addPathElement( HNRPE_TYPE_PARAM, paramName );
-                    }
-                    else
-                    {
-                        // Add a regular path element
-                        path->addPathElement( HNRPE_TYPE_PATH, *sit );
-                    }
-                } 
-            }
-        }
-
-    }
-    catch( Poco::Exception ex )
-    {
-        std::cerr << "registerEndpointsFromOpenAPI - json error: " << ex.displayText() << std::endl;
+        //cleanup();
         return;
     }
+
+    m_runMonitor = true;
+
+    // Start up the event loop
+    ( (HNProxySequencerRunner*) m_thelp )->startThread();
 }
 
 void 
-HNMgmtProxy::registerProxyEndpoint( std::string dispatchID, HNRestDispatchInterface *dispatchInf, std::string opID, std::string rootURI )
+HNProxySequencer::runProxySequencerLoop()
 {
-    HNRestPath *path;
-    std::vector< std::string > pathStrs;
+    std::cout << "HNProxySequencer::runMonitoringLoop()" << std::endl;
 
-    // Parse the extracted uri
-    Poco::URI uri( rootURI );
-
-    // Break it into tokens by '/'
-    uri.getPathSegments( pathStrs );
-
-    std::cout << "regproxy - uri: " << uri.toString() << std::endl;
-    std::cout << "regproxy - segcnt: " << pathStrs.size() << std::endl;
-    std::cout << "regend - opID: " << opID << std::endl;
-
-    // We have everything we need so now the new path can be added to the 
-    // http factory class
-    path = m_factory.addPath( dispatchID, opID,  dispatchInf );
-
-    // Record the method for this specific path record
-    path->setMethod( "PROXY" );
-
-    // Build up the path element array, taking into account url based parameters
-    for( std::vector< std::string >::iterator sit = pathStrs.begin(); sit != pathStrs.end(); sit++ )
+    // Initialize for event loop
+    m_epollFD = epoll_create1( 0 );
+    if( m_epollFD == -1 )
     {
-        std::cout << "PathComp: " << *sit << std::endl;
-        // Check if this is a parameter or a regular path element.
-        if( (sit->front() == '{') && (sit->back() == '}') )
-        {
-            // Add a parameter capture
-            std::string paramName( (sit->begin() + 1), (sit->end() - 1) );
-            std::cout << "regproxy - paramName: " << paramName << std::endl;
-            path->addPathElement( HNRPE_TYPE_PARAM, paramName );
-        }
-        else
-        {
-            // Add a regular path element
-            path->addPathElement( HNRPE_TYPE_PATH, *sit );
-        }
-    } 
-
-}
-
-void 
-HNMgmtProxy::startRequest( HNProxyRequest *request, HNProxyResponse *response )
-{
-#if 0
-    HNOperationData *opData = NULL;
-    std::vector< std::string > pathStrs;
-
-    Poco::URI uri( request.getURI() );    
-
-    //if (request.getURI() == "/")
-    //    return new HNodeRestHandler();
-    //else
-
-    //std::cout << "Server Request method: " << request.getMethod() << std::endl;
-    //std::cout << "Server Request URI: " << uri.toString() << std::endl;
-
-    uri.getPathSegments( pathStrs );
-
-    for( std::vector< HNRestPath >::iterator it = pathList.begin(); it != pathList.end(); it++ )
-    {
-        //std::cout << "Check handler: " << it->getOpID() << std::endl;
-        opData = it->checkForHandler( request.getMethod(), pathStrs );
-        if( opData != NULL )
-            return new HNRestHandler( opData );
+        //log.error( "ERROR: Failure to create epoll event loop: %s", strerror(errno) );
+        return;
     }
 
-    // Should return default error handler instead?
-    return NULL;
-    #endif
+    // Buffer where events are returned 
+    m_events = (struct epoll_event *) calloc( MAXEVENTS, sizeof m_event );
+
+    // Initialize the proxyResponseQueue
+    // and add it to the epoll loop
+    m_requestQueue.init();
+    int requestQFD = m_requestQueue.getEventFD();
+    addSocketToEPoll( requestQFD );
+
+    // The listen loop 
+    while( m_runMonitor == true )
+    {
+        int n;
+        int i;
+        struct tm newtime;
+        time_t ltime;
+
+        // Check for events
+        n = epoll_wait( m_epollFD, m_events, MAXEVENTS, 2000 );
+
+        std::cout << "HNProxySequencer::monitor wakeup" << std::endl;
+
+        // EPoll error
+        if( n < 0 )
+        {
+            // If we've been interrupted by an incoming signal, continue, wait for socket indication
+            if( errno == EINTR )
+                continue;
+
+            // Handle error
+            //log.error( "ERROR: Failure report by epoll event loop: %s", strerror( errno ) );
+            return;
+        }
+ 
+        // If it was a timeout then continue to next loop
+        // skip socket related checks.
+        if( n == 0 )
+            continue;
+
+        // Socket event
+        for( i = 0; i < n; i++ )
+	    {
+            if( requestQFD == m_events[i].data.fd )
+            {
+                while( m_requestQueue.getPostedCnt() )
+                {
+                    HNProxyTicket *request = (HNProxyTicket *) m_requestQueue.aquireRecord();
+
+                    std::cout << "HNProxySequencer::Received proxy request" << std::endl;
+
+                    makeProxyRequest( request );
+                }
+            }
+        }
+    }
+
+    std::cout << "HNProxySequencer::monitor exit" << std::endl;
 }
 
-#endif
+void
+HNProxySequencer::shutdown()
+{
+    if( !m_thelp )
+    {
+        //cleanup();
+        return;
+    }
 
-#if 0
-void getIrrigationStatus()
+    // End the event loop
+    ( (HNProxySequencerRunner*) m_thelp )->killThread();
+
+    delete ( (HNProxySequencerRunner*) m_thelp );
+    m_thelp = NULL;
+}
+
+void 
+HNProxySequencer::killProxySequencerLoop()
+{
+    m_runMonitor = false;    
+}
+
+HNPS_RESULT_T
+HNProxySequencer::addSocketToEPoll( int sfd )
+{
+    int flags, s;
+
+    flags = fcntl( sfd, F_GETFL, 0 );
+    if( flags == -1 )
+    {
+        syslog( LOG_ERR, "HNProxySequencer - Failed to get socket flags: %s", strerror(errno) );
+        return HNPS_RESULT_FAILURE;
+    }
+
+    flags |= O_NONBLOCK;
+    s = fcntl( sfd, F_SETFL, flags );
+    if( s == -1 )
+    {
+        syslog( LOG_ERR, "HNProxySequencer - Failed to set socket flags: %s", strerror(errno) );
+        return HNPS_RESULT_FAILURE; 
+    }
+
+    m_event.data.fd = sfd;
+    m_event.events = EPOLLIN | EPOLLET;
+    s = epoll_ctl( m_epollFD, EPOLL_CTL_ADD, sfd, &m_event );
+    if( s == -1 )
+    {
+        return HNPS_RESULT_FAILURE;
+    }
+
+    return HNPS_RESULT_SUCCESS;
+}
+
+HNPS_RESULT_T
+HNProxySequencer::removeSocketFromEPoll( int sfd )
+{
+    int s;
+
+    s = epoll_ctl( m_epollFD, EPOLL_CTL_DEL, sfd, NULL );
+    if( s == -1 )
+    {
+        return HNPS_RESULT_FAILURE;
+    }
+
+    return HNPS_RESULT_SUCCESS;
+}
+
+HNPS_RESULT_T
+HNProxySequencer::makeProxyRequest( HNProxyTicket *reqTicket )
 {
     Poco::URI uri;
     uri.setScheme( "http" );
-    uri.setHost( m_host );
-    uri.setPort( m_port );
+    uri.setHost( "192.168.1.155" );
+    uri.setPort( 8080 );
     uri.setPath( "/hnode2/irrigation/status" );
 
     pn::HTTPClientSession session( uri.getHost(), uri.getPort() );
@@ -308,12 +272,13 @@ void getIrrigationStatus()
 
     if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
     {
-        return;
+        return HNPS_RESULT_FAILURE;
     }
 
     std::string body;
     Poco::StreamCopier::copyToString( rs, body );
     std::cout << "Response:" << std::endl << body << std::endl;
+
+    return HNPS_RESULT_SUCCESS;
 }
-#endif
 
