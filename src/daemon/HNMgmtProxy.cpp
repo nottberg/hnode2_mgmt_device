@@ -37,6 +37,54 @@ HNProxyTicket::~HNProxyTicket()
 
 }
 
+void 
+HNProxyTicket::setCRC32ID( std::string id )
+{
+    m_crc32ID = id;
+}
+
+void 
+HNProxyTicket::setAddress( std::string address )
+{
+    m_address = address;
+}
+
+void 
+HNProxyTicket::setPort( uint16_t port )
+{
+    m_port = port;
+}
+
+std::string
+HNProxyTicket::getCRC32ID()
+{
+    return m_crc32ID;
+}
+
+std::string
+HNProxyTicket::getAddress()
+{
+    return m_address;
+}
+
+uint16_t
+HNProxyTicket::getPort()
+{
+    return m_port;
+}
+
+std::string
+HNProxyTicket::getPath()
+{
+    return "/hnode2/irrigation/status";
+}
+
+HNProxyHTTPReqRsp* 
+HNProxyTicket::getRR()
+{
+    return m_parentRR;
+}
+
 // Helper class for running HNSCGISink  
 // proxy loop as an independent thread
 class HNProxySequencerRunner : public Poco::Runnable
@@ -176,7 +224,7 @@ HNProxySequencer::runProxySequencerLoop()
 
                     std::cout << "HNProxySequencer::Received proxy request" << std::endl;
 
-                    makeProxyRequest( request );
+                    executeProxyRequest( request );
                 }
             }
         }
@@ -252,21 +300,172 @@ HNProxySequencer::removeSocketFromEPoll( int sfd )
     return HNPS_RESULT_SUCCESS;
 }
 
-HNPS_RESULT_T
-HNProxySequencer::makeProxyRequest( HNProxyTicket *reqTicket )
+class HNProxyPocoHelper : public HNPRRContentSource, public HNPRRContentSink 
 {
+    public:
+        HNProxyPocoHelper();
+       ~HNProxyPocoHelper();
+
+        void init( HNProxyTicket *reqTicket );
+
+        HNPRR_RESULT_T initiateRequest( HNProxyTicket *reqTicket );
+        HNPRR_RESULT_T waitForResponse( HNProxyTicket *reqTicket );
+
+        virtual std::istream* getSourceStreamRef();
+        virtual std::ostream* getSinkStreamRef();
+
+    private:
+        Poco::URI              m_uri;
+
+        pn::HTTPClientSession  m_session;
+        pn::HTTPRequest        m_request;
+        pn::HTTPResponse       m_response;
+
+        std::istream          *m_rspStream;
+        std::ostream          *m_reqStream;
+};
+
+HNProxyPocoHelper::HNProxyPocoHelper()
+: m_request( pn::HTTPMessage::HTTP_1_1 )
+{
+    m_rspStream = NULL;
+    m_reqStream = NULL;
+}
+
+HNProxyPocoHelper::~HNProxyPocoHelper()
+{
+
+}
+
+std::istream* 
+HNProxyPocoHelper::getSourceStreamRef()
+{
+    return m_rspStream;
+}
+
+std::ostream* 
+HNProxyPocoHelper::getSinkStreamRef()
+{
+    return m_reqStream;
+}
+
+void
+HNProxyPocoHelper::init( HNProxyTicket *reqTicket )
+{
+    // Create the URL to proxy too.
+    m_uri.setScheme( "http" );
+    m_uri.setHost( reqTicket->getAddress() );
+    m_uri.setPort( reqTicket->getPort() );
+    m_uri.setPath( reqTicket->getPath() ); // i.e. "/hnode2/irrigation/status"
+
+    // Setup session object
+    m_session.setHost( m_uri.getHost() );
+    m_session.setPort( m_uri.getPort() );
+
+    // Set up request object from info in ticket and originating request.
+    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
+
+    m_request.setMethod( reqMsg.getMethod() );
+    m_request.setURI( m_uri.getPathAndQuery() );
+}
+
+HNPRR_RESULT_T
+HNProxyPocoHelper::initiateRequest( HNProxyTicket *reqTicket )
+{
+    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
+
+    // Send the request
+    m_reqStream = &m_session.sendRequest( m_request );
+
+    // Associate the transfer stream
+    reqMsg.setContentSink( this );
+
+    return (reqMsg.getContentLength() > 0) ? HNPRR_RESULT_MSG_CONTENT : HNPRR_RESULT_MSG_COMPLETE;
+}
+
+HNPRR_RESULT_T
+HNProxyPocoHelper::waitForResponse( HNProxyTicket *reqTicket )
+{
+    HNProxyHTTPMsg &rspMsg = reqTicket->getRR()->getResponse();
+
+    // Wait for a response
+    m_rspStream = &m_session.receiveResponse( m_response );
+    std::cout << m_response.getStatus() << " " << m_response.getReason() << " " << m_response.getContentLength() << std::endl;
+
+    rspMsg.setStatusCode( m_response.getStatus() );
+    rspMsg.setReason( m_response.getReason() );
+    rspMsg.setContentLength( m_response.getContentLength() );
+
+    for( pn::NameValueCollection::ConstIterator it = m_response.begin(); it != m_response.end(); it++ )
+    {
+        rspMsg.addHdrPair( it->first, it->second );
+    }
+
+    // Associate the transfer stream
+    rspMsg.setContentSource( this );
+
+    return (rspMsg.getContentLength() > 0) ? HNPRR_RESULT_MSG_CONTENT : HNPRR_RESULT_MSG_COMPLETE;
+}
+
+HNPS_RESULT_T
+HNProxySequencer::executeProxyRequest( HNProxyTicket *reqTicket )
+{
+    HNPRR_RESULT_T  result;
+    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
+    HNProxyPocoHelper *ph = new HNProxyPocoHelper();
+
+    ph->init( reqTicket );
+
+    result = ph->initiateRequest( reqTicket );
+    while( result == HNPRR_RESULT_MSG_CONTENT )
+    {
+        result = reqMsg.xferContentChunk( 4096 );
+    }
+
+    if( result != HNPRR_RESULT_MSG_COMPLETE )
+    {
+        return HNPS_RESULT_FAILURE;
+    }
+
+    result = ph->waitForResponse( reqTicket );
+
+    if( (result != HNPRR_RESULT_MSG_COMPLETE) && (result != HNPRR_RESULT_MSG_CONTENT) )
+    {
+        return HNPS_RESULT_FAILURE;
+    }
+
+    if( m_responseQueue == NULL )
+        return HNPS_RESULT_FAILURE;
+
+    m_responseQueue->postRecord( reqTicket );
+
+#if 0
     Poco::URI uri;
     uri.setScheme( "http" );
-    uri.setHost( "192.168.1.155" );
-    uri.setPort( 8080 );
-    uri.setPath( "/hnode2/irrigation/status" );
+    uri.setHost( reqTicket->getAddress() );
+    uri.setPort( reqTicket->getPort() );
+    uri.setPath( reqTicket->getPath() ); // i.e. "/hnode2/irrigation/status"
 
+    // Allocate
     pn::HTTPClientSession session( uri.getHost(), uri.getPort() );
-    pn::HTTPRequest request( pn::HTTPRequest::HTTP_GET, uri.getPathAndQuery(), pn::HTTPMessage::HTTP_1_1 );
+
+    // Set session based on request parameters
+    // Copy over any proxy headers
+    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
+    pn::HTTPRequest request( reqMsg.getMethod(), uri.getPathAndQuery(), pn::HTTPMessage::HTTP_1_1 );
+
+
+    // Send the request
+    std::ostream& os = session.sendRequest( request );
+
+    // If there is outbound data, then send that now
+    if( reqMsg.getContentLength() )
+    {
+        //uint bytesSent
+    }
+
+    // Wait for a response
     pn::HTTPResponse response;
-
-    session.sendRequest( request );
-
     std::istream& rs = session.receiveResponse( response );
     std::cout << response.getStatus() << " " << response.getReason() << " " << response.getContentLength() << std::endl;
 
@@ -278,6 +477,7 @@ HNProxySequencer::makeProxyRequest( HNProxyTicket *reqTicket )
     std::string body;
     Poco::StreamCopier::copyToString( rs, body );
     std::cout << "Response:" << std::endl << body << std::endl;
+#endif
 
     return HNPS_RESULT_SUCCESS;
 }

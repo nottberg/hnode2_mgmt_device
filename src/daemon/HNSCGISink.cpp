@@ -750,16 +750,16 @@ HNSCGISinkClient::getReqRsp()
     return &m_curRR;
 }
 
-std::istream&
+std::istream*
 HNSCGISinkClient::getSourceStreamRef()
 {
-    return m_iostream;
+    return &m_iostream;
 }
 
-std::ostream&
+std::ostream*
 HNSCGISinkClient::getSinkStreamRef()
 {
-    return m_iostream;
+    return &m_iostream;
 }
 
 
@@ -947,7 +947,7 @@ HNSCGISink::runSCGILoop()
 
                     HNPRR_RESULT_T status = response->getResponse().sendHeaders();
 
-                    while( status == HNPRR_RESULT_RESPONSE_CONTENT )
+                    while( status == HNPRR_RESULT_MSG_CONTENT )
                     {
                         status = response->getResponse().xferContentChunk( 4096 );
                     }

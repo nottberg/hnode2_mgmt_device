@@ -138,8 +138,8 @@ class HNSCGISinkClient : public HNPRRContentSource, public HNPRRContentSink
 
         HNProxyHTTPReqRsp *getReqRsp();
 
-        virtual std::istream& getSourceStreamRef();
-        virtual std::ostream& getSinkStreamRef();
+        virtual std::istream* getSourceStreamRef();
+        virtual std::ostream* getSinkStreamRef();
 };
 
 class HNSCGISink

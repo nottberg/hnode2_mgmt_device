@@ -211,28 +211,28 @@ HNProxyHTTPMsg::sendHeaders()
 
     std::cout << "sendHeaders - 2" << std::endl;
 
-    std::ostream &outStream = m_cSink->getSinkStreamRef();
+    std::ostream *outStream = m_cSink->getSinkStreamRef();
 
     // Add the Status header
-    outStream << "Status: " << getStatusCode() << " " << getReason() << "\r\n";
+    *outStream << "Status: " << getStatusCode() << " " << getReason() << "\r\n";
 
     // Add Content-Length header
     uint contentLength = getContentLength();
-    outStream << "Content-Length: " << contentLength << "\r\n";
+    *outStream << "Content-Length: " << contentLength << "\r\n";
    
     // See if we need the Content-Type header
     if( contentLength != 0 )
     {
-        outStream << "Content-Type: " << getContentType() << "\r\n";
+        *outStream << "Content-Type: " << getContentType() << "\r\n";
     }
 
     // Add any additional headers
-    buildExtraHeaders( outStream );   
+    buildExtraHeaders( *outStream );   
  
     // Add a blank line to mark the end of the headers
-    outStream << "\r\n";
+    *outStream << "\r\n";
 
-    outStream.flush();
+    outStream->flush();
 
     //sprintf( rtnBuf, "Status: 200 OK\r\nContent-Type: text/plain\r\n\r\n42" );
 
@@ -240,7 +240,7 @@ HNProxyHTTPMsg::sendHeaders()
  
     //printf( "HNSCGISinkClient::sendData - bytesWritten: %lu\n", bytesWritten );
     
-    return contentLength ? HNPRR_RESULT_RESPONSE_CONTENT : HNPRR_RESULT_RESPONSE_COMPLETE;
+    return contentLength ? HNPRR_RESULT_MSG_CONTENT : HNPRR_RESULT_MSG_COMPLETE;
 }
 
 void 
@@ -280,40 +280,40 @@ HNProxyHTTPMsg::xferContentChunk( uint maxChunkLength )
         return HNPRR_RESULT_FAILURE;
 
     if( m_contentMoved >= m_contentLength )
-        return HNPRR_RESULT_RESPONSE_COMPLETE;
+        return HNPRR_RESULT_MSG_COMPLETE;
 
-    std::istream &is = m_cSource->getSourceStreamRef();
-    std::ostream &os = m_cSink->getSinkStreamRef();
+    std::istream *is = m_cSource->getSourceStreamRef();
+    std::ostream *os = m_cSink->getSinkStreamRef();
 
     uint bytesToMove = m_contentLength - m_contentMoved;
     if( bytesToMove > sizeof(buff) )
         bytesToMove = sizeof(buff);
 
-    is.read( buff, bytesToMove );
-    os.write( buff, bytesToMove );
+    is->read( buff, bytesToMove );
+    os->write( buff, bytesToMove );
  
     std::cout << "xferContentChunk - bytesToMove: " << bytesToMove << std::endl;
 
     m_contentMoved += bytesToMove;
 
     if( m_contentMoved < m_contentLength )
-        return HNPRR_RESULT_RESPONSE_CONTENT;
+        return HNPRR_RESULT_MSG_CONTENT;
  
-    os.flush();
+    os->flush();
 
-    return HNPRR_RESULT_RESPONSE_COMPLETE;
+    return HNPRR_RESULT_MSG_COMPLETE;
 }
 
-std::istream& 
+std::istream* 
 HNProxyHTTPMsg::getSourceStreamRef()
 {
-    return m_localContent;
+    return &m_localContent;
 }
 
-std::ostream& 
+std::ostream* 
 HNProxyHTTPMsg::getSinkStreamRef()
 {
-    return m_localContent;
+    return &m_localContent;
 }
 
 void 

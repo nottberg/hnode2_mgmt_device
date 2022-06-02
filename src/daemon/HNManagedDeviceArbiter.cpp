@@ -335,6 +335,22 @@ HNMDARecord::getCRC32ID()
 }
 
 HNMDL_RESULT_T 
+HNMDARecord::findPreferredConnection( HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo )
+{
+    for( std::vector< HNMDARAddress >::iterator it = m_addrList.begin(); it != m_addrList.end(); it++ )
+    {
+        if( it->getType() == preferredType )
+        {
+            connInfo.setAddressInfo( it->getDNSName(), it->getAddress(), it->getPort() );
+
+            return HNMDL_RESULT_SUCCESS;
+        }
+    }
+
+    return HNMDL_RESULT_FAILURE;
+}
+
+HNMDL_RESULT_T 
 HNMDARecord::updateRecord( HNMDARecord &newRecord )
 {   
     setDiscoveryID( newRecord.getDiscoveryID() );
@@ -430,6 +446,18 @@ HNManagedDeviceArbiter::getDeviceListCopy( std::vector< HNMDARecord > &deviceLis
     {    
         deviceList.push_back( it->second );
     }
+}
+
+HNMDL_RESULT_T 
+HNManagedDeviceArbiter::lookupConnectionInfo( std::string crc32ID, HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo )
+{
+    // See if we have a record for the device
+    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+
+    if( it == mdrMap.end() )
+        return HNMDL_RESULT_FAILURE;
+
+    return it->second.findPreferredConnection( preferredType, connInfo );
 }
 
 void 

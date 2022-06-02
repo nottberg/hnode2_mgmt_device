@@ -275,7 +275,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
                     HNProxyTicket *proxyTicket = checkForProxyRequest( proxyRR );
 
-                    if( proxyTicket )
+                    if( proxyTicket != NULL )
                     {
                         std::cout << "Proxy request to device: " << std::endl;
                         m_proxySeq.getRequestQueue()->postRecord( proxyTicket );
@@ -307,6 +307,11 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
                     std::cout << "HNManagementDevice::Received proxy response" << std::endl;
 
+                    HNProxyHTTPReqRsp *proxyRR = proxyTicket->getRR();
+
+                    delete proxyTicket;
+
+                    reqsink.getProxyResponseQueue()->postRecord( proxyRR );
                 }
             }            
         }
@@ -568,8 +573,43 @@ HNManagementDevice::registerProxyEndpointsFromOpenAPI( std::string openAPIJson )
 HNProxyTicket* 
 HNManagementDevice::checkForProxyRequest( HNProxyHTTPReqRsp *reqRR )
 {
-    return new HNProxyTicket( reqRR );
-    //return NULL;
+    std::vector< std::string > pathStrs;
+    Poco::URI uri( reqRR->getRequest().getURI() );
+
+    std::cout << "checkForProxyRequest - method: " << reqRR->getRequest().getMethod() << std::endl;
+    std::cout << "checkForProxyRequest - URI: " << uri.toString() << std::endl;
+
+    // Break the uri into segments
+    uri.getPathSegments( pathStrs );
+
+    // Make sure we have at least the correct number of segments
+    // to represent a device proxy request.  Then check that
+    // url is of the form /hnode2/mgmt/device-proxy/{crc32ID}/*
+    if( pathStrs.size() < 4 )
+        return NULL;
+
+    if( (pathStrs[0] != "hnode2") || (pathStrs[1] != "mgmt") || (pathStrs[2] != "device-proxy") )
+        return NULL;
+
+    // Grab the CRC32ID and try to look up the device. 
+    std::string crc32ID = pathStrs[3];
+
+    HNMDARAddress dcInfo;
+    HNMDL_RESULT_T result = arbiter.lookupConnectionInfo( crc32ID, HMDAR_ADDRTYPE_IPV4, dcInfo );
+    if( result != HNMDL_RESULT_SUCCESS )
+    {
+        return NULL;
+    }
+
+    // Allocate and fillout a ProxyTicket for return.
+    HNProxyTicket *rtnTicket = new HNProxyTicket( reqRR );
+
+    rtnTicket->setCRC32ID( crc32ID );
+    rtnTicket->setAddress( dcInfo.getAddress() );
+    rtnTicket->setPort( dcInfo.getPort() );
+    // rtnTicket->setProxyPrefix();
+
+    return rtnTicket;
 }
 
 HNOperationData*
@@ -585,10 +625,6 @@ HNManagementDevice::mapProxyRequest( HNProxyHTTPReqRsp *reqRR )
 
     // Break the uri into segments
     uri.getPathSegments( pathStrs );
-
-    // Check for requests that need to be proxied to the 
-    // remote devices instead of being handled locally
-
 
     // Check it this is a local request that the managment node should handle
     for( std::vector< HNRestPath >::iterator it = m_proxyPathList.begin(); it != m_proxyPathList.end(); it++ )

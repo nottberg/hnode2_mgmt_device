@@ -43,8 +43,25 @@ class HNProxyTicket
         HNProxyTicket( HNProxyHTTPReqRsp *parentRR );
        ~HNProxyTicket();
 
+        void setCRC32ID( std::string id );
+        void setAddress( std::string addr );
+        void setPort( uint16_t port );
+
+        std::string getCRC32ID();
+        std::string getAddress();
+        uint16_t getPort();
+        std::string getPath();
+
+        HNProxyHTTPReqRsp* getRR();
+
     private:
         HNProxyHTTPReqRsp  *m_parentRR;
+
+        std::string  m_crc32ID;
+        std::string  m_address;
+        uint16_t     m_port;
+
+
 };
 
 // Perform the proxy request operations
@@ -65,7 +82,7 @@ class HNProxySequencer
         HNPS_RESULT_T addSocketToEPoll( int sfd );
         HNPS_RESULT_T removeSocketFromEPoll( int sfd );
 
-        HNPS_RESULT_T makeProxyRequest( HNProxyTicket *request );
+        HNPS_RESULT_T executeProxyRequest( HNProxyTicket *request );
 
     private:
             // The thread helper

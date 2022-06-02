@@ -111,6 +111,8 @@ class HNMDARecord
 
         void getAddressList( std::vector< HNMDARAddress > &addrList );
 
+        HNMDL_RESULT_T findPreferredConnection( HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo );
+        
         HNMDL_RESULT_T updateRecord( HNMDARecord &newRecord );
 
         void debugPrint( uint offset );
@@ -144,6 +146,8 @@ class HNManagedDeviceArbiter
         void shutdown();
 
         void getDeviceListCopy( std::vector< HNMDARecord > &deviceList );
+
+        HNMDL_RESULT_T lookupConnectionInfo( std::string crc32ID, HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo );
 
         void debugPrint();
 

@@ -11,21 +11,21 @@ namespace pn = Poco::Net;
 
 typedef enum HNPRRResultEnumeration {
     HNPRR_RESULT_SUCCESS,
-    HNPRR_RESULT_RESPONSE_CONTENT,
-    HNPRR_RESULT_RESPONSE_COMPLETE,
+    HNPRR_RESULT_MSG_CONTENT,
+    HNPRR_RESULT_MSG_COMPLETE,
     HNPRR_RESULT_FAILURE
 } HNPRR_RESULT_T;
 
 class HNPRRContentSource
 {
     public:
-        virtual std::istream& getSourceStreamRef() = 0;
+        virtual std::istream* getSourceStreamRef() = 0;
 };
 
 class HNPRRContentSink
 {
     public:
-        virtual std::ostream& getSinkStreamRef() = 0;
+        virtual std::ostream* getSinkStreamRef() = 0;
 };
 
 class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
@@ -96,8 +96,8 @@ class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
 
         HNPRR_RESULT_T xferContentChunk( uint maxChunkLength );
 
-        std::istream& getSourceStreamRef();
-        std::ostream& getSinkStreamRef();
+        std::istream* getSourceStreamRef();
+        std::ostream* getSinkStreamRef();
 
         void debugPrint();
 };
