@@ -21,13 +21,56 @@ void
 HNProxyHTTPMsg::clearHeaders()
 {
     m_statusCode = 0;
-    
-    m_contentType.clear();
+    m_reason.clear();
 
-    m_contentLength = 0;
     m_contentMoved  = 0;
 
     m_paramMap.clear();
+}
+
+void
+HNProxyHTTPMsg::addSCGIRequestHeader( std::string name, std::string value )
+{
+    // Special handling for headers orginating from the SCGI layer
+    // The original CGI interface passed headers via ENV variables 
+    // which meant some of the common headers are passed with all
+    // capital underscore instead of dash versions of the names.
+    // Here segregate that style of header into a seperate list and
+    // translate some of them into the more common format.
+    if( name.find('_') != std::string::npos )
+    {
+        // Header contains an underscore so add it to CGI variable map.
+        printf( "addCGIVarPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
+        m_cgiVarMap.insert( std::pair<std::string, std::string>(name, value) );
+
+        // Do some special handling for some of the CGI values.
+        if( Poco::icompare( name, "CONTENT_LENGTH" ) == 0 )
+        {
+            addHdrPair( "Content-Length", value );
+            return;
+        }
+        else if( Poco::icompare( name, "CONTENT_TYPE") == 0 )
+        {
+            addHdrPair( "Content-Type", value );
+            return;
+        }
+        else if( Poco::icompare( name, "REQUEST_URI") == 0 )
+        {
+            setURI( value );
+            return;
+        }
+        else if( Poco::icompare( name, "REQUEST_METHOD") == 0 )
+        {
+            setMethod( value );
+            return;
+        }
+
+        // Done processing this header
+        return;
+    }
+
+    // Not a CGI parameter so add as a normal header
+    addHdrPair( name, value );
 }
 
 void
@@ -35,54 +78,25 @@ HNProxyHTTPMsg::addHdrPair( std::string name, std::string value )
 {
     printf( "addHdrPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
     
-    // Special case certain headers
+    // Handle content length specially so that we always get constant capilization. 
     if( Poco::icompare( name, "Content-Length" ) == 0 )
     {
-        m_contentLength = strtol( value.c_str(), NULL, 0);
-        return;
-    }
-    else if( Poco::icompare( name, "CONTENT_LENGTH" ) == 0 )
-    {
-        m_contentLength = strtol( value.c_str(), NULL, 0);
-        return;
-    }
-    else if( Poco::icompare( name, "Status") == 0 )
-    {
-        m_statusCode = strtol( value.c_str(), NULL, 0);
-        return;
-    }
-    else if( Poco::icompare( name, "Content-Type") == 0 )
-    {
-        m_contentType = value;
-        return;
-    }
-    else if( Poco::icompare( name, "CONTENT_TYPE") == 0 )
-    {
-        m_contentType = value;
-        return;
-    }
-    else if( Poco::icompare( name, "REQUEST_URI") == 0 )
-    {
-        m_uri = value;
-        return;
-    }
-    else if( Poco::icompare( name, "REQUEST_METHOD") == 0 )
-    {
-        m_method = value;
+        m_paramMap.insert(std::pair< std::string, std::string >( "Content-Length", value ) );
         return;
     }
 
     m_paramMap.insert( std::pair<std::string, std::string>(name, value) );
 }
 
-void 
-HNProxyHTTPMsg::buildExtraHeaders( std::ostream &outStream )
+bool 
+HNProxyHTTPMsg::hasHeader( std::string name )
 {
-   // Add other extra headers
-   for( std::map< std::string, std::string >::iterator hit = m_paramMap.begin(); hit != m_paramMap.end(); hit++ )
-   {
-       outStream << hit->first << ": " << hit->second << "\r\n";
-   }
+    std::map< std::string, std::string >::iterator it = m_paramMap.find( name ); 
+
+    if( it == m_paramMap.end() )
+        return false;
+
+    return true;
 }
 
 const std::string& 
@@ -122,6 +136,18 @@ HNProxyHTTPMsg::isDispatched()
 }
 
 void 
+HNProxyHTTPMsg::setURI( std::string uri )
+{
+    m_uri = uri;
+}
+
+void 
+HNProxyHTTPMsg::setMethod( std::string method )
+{
+    m_method = method;
+}
+
+void 
 HNProxyHTTPMsg::setStatusCode( uint statusCode )
 {
     m_statusCode = statusCode;
@@ -134,16 +160,17 @@ HNProxyHTTPMsg::setReason( std::string reason )
 }
 
 void 
-HNProxyHTTPMsg::setContentType( std::string typeStr )
+HNProxyHTTPMsg::setContentLength( uint length )
 {
-    m_contentType = typeStr;
+    char tmpBuf[64];
+    sprintf(tmpBuf, "%u", length);
+    m_paramMap.insert( std::pair<std::string, std::string>("Content-Length", tmpBuf) );
 }
 
 void 
-HNProxyHTTPMsg::setContentLength( uint length )
+HNProxyHTTPMsg::setContentType( std::string typeStr )
 {
-    m_contentLength = length;
-    m_contentMoved  = 0;
+    m_paramMap.insert( std::pair<std::string, std::string>("Content-Type", typeStr) );
 }
 
 void 
@@ -188,59 +215,47 @@ HNProxyHTTPMsg::getReason()
     return m_reason;
 }
 
-std::string 
-HNProxyHTTPMsg::getContentType()
-{
-    return m_contentType;
-}
-
 uint 
 HNProxyHTTPMsg::getContentLength()
 {
-    return m_contentLength;
+    std::map< std::string, std::string >::iterator it = m_paramMap.find( "Content-Length" ); 
+
+    if( it == m_paramMap.end() )
+        return 0;
+
+    return strtol( it->second.c_str(), NULL, 0);
 }
 
 HNPRR_RESULT_T 
-HNProxyHTTPMsg::sendHeaders()
+HNProxyHTTPMsg::sendSCGIResponseHeaders()
 {
-    std::cout << "sendHeaders - 1" << std::endl;
+    std::cout << "SCGIResponseHeaders - 1" << std::endl;
 
     // Get the output stream reference
     if( m_cSink == NULL )
         return HNPRR_RESULT_FAILURE;
 
-    std::cout << "sendHeaders - 2" << std::endl;
+    std::cout << "SCGIResponseHeaders - 2" << std::endl;
 
     std::ostream *outStream = m_cSink->getSinkStreamRef();
 
     // Add the Status header
     *outStream << "Status: " << getStatusCode() << " " << getReason() << "\r\n";
 
-    // Add Content-Length header
-    uint contentLength = getContentLength();
-    *outStream << "Content-Length: " << contentLength << "\r\n";
-   
-    // See if we need the Content-Type header
-    if( contentLength != 0 )
+    // Output other headers
+    for( std::map< std::string, std::string >::iterator hit = m_paramMap.begin(); hit != m_paramMap.end(); hit++ )
     {
-        *outStream << "Content-Type: " << getContentType() << "\r\n";
+        *outStream << hit->first << ": " << hit->second << "\r\n";
     }
-
-    // Add any additional headers
-    buildExtraHeaders( *outStream );   
  
     // Add a blank line to mark the end of the headers
     *outStream << "\r\n";
 
+    // Push this first bit to the server.
     outStream->flush();
 
-    //sprintf( rtnBuf, "Status: 200 OK\r\nContent-Type: text/plain\r\n\r\n42" );
-
-    //ssize_t bytesWritten = send( m_fd, rtnBuf, strlen(rtnBuf), 0 );
- 
-    //printf( "HNSCGISinkClient::sendData - bytesWritten: %lu\n", bytesWritten );
-    
-    return contentLength ? HNPRR_RESULT_MSG_CONTENT : HNPRR_RESULT_MSG_COMPLETE;
+    // Move to content send    
+    return HNPRR_RESULT_MSG_CONTENT;
 }
 
 void 
@@ -279,26 +294,46 @@ HNProxyHTTPMsg::xferContentChunk( uint maxChunkLength )
     if( (m_cSource == NULL) || (m_cSink == NULL) )
         return HNPRR_RESULT_FAILURE;
 
-    if( m_contentMoved >= m_contentLength )
-        return HNPRR_RESULT_MSG_COMPLETE;
-
     std::istream *is = m_cSource->getSourceStreamRef();
     std::ostream *os = m_cSink->getSinkStreamRef();
 
-    uint bytesToMove = m_contentLength - m_contentMoved;
-    if( bytesToMove > sizeof(buff) )
-        bytesToMove = sizeof(buff);
+    if( hasHeader( "Content-Length" ) == true )
+    {
+        uint contentLength = getContentLength();
 
-    is->read( buff, bytesToMove );
-    os->write( buff, bytesToMove );
+        if( m_contentMoved >= contentLength )
+            return HNPRR_RESULT_MSG_COMPLETE;
+
+        uint bytesToMove = contentLength - m_contentMoved;
+        if( bytesToMove > sizeof(buff) )
+            bytesToMove = sizeof(buff);
+
+        is->read( buff, bytesToMove );
+        std::streamsize bytesRead = is->gcount();
+        os->write( buff, bytesRead );
  
-    std::cout << "xferContentChunk - bytesToMove: " << bytesToMove << std::endl;
+        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << std::endl;
 
-    m_contentMoved += bytesToMove;
+        m_contentMoved += bytesRead;
 
-    if( m_contentMoved < m_contentLength )
-        return HNPRR_RESULT_MSG_CONTENT;
+        if( (m_contentMoved < contentLength) && (is->eof() == false) )
+            return HNPRR_RESULT_MSG_CONTENT;
+    }
+    else
+    {
+        uint bytesToMove = sizeof(buff);
+
+        is->read( buff, bytesToMove );
+        std::streamsize bytesRead = is->gcount();
+        os->write( buff, bytesRead );
  
+        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << std::endl;
+
+        if( is->eof() == false )
+            return HNPRR_RESULT_MSG_CONTENT;
+    }
+    
+    // Push everything to server before closing out.
     os->flush();
 
     return HNPRR_RESULT_MSG_COMPLETE;

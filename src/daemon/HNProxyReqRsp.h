@@ -33,15 +33,18 @@ class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
     private:
         std::string m_uri;
         std::string m_method;
-        std::string m_contentType;
+    //    std::string m_contentType;
+        uint m_statusCode;
         std::string m_reason;
 
-        uint m_statusCode;
-        uint m_contentLength;
+
+    //    uint m_contentLength;
         
         bool m_headerComplete;
         bool m_dispatched;
         
+        std::map< std::string, std::string > m_cgiVarMap;
+
         // 
         std::map< std::string, std::string > m_paramMap;
         
@@ -50,8 +53,6 @@ class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
 
         std::stringstream    m_localContent;
         uint                 m_contentMoved;
-
-        void buildExtraHeaders( std::ostream &outStream );
 
     public:
         HNProxyHTTPMsg();
@@ -65,11 +66,15 @@ class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
         void setDispatched( bool value );
         bool isDispatched();     
        
+        void setURI( std::string uri );
+        void setMethod( std::string method );
+
         void setStatusCode( uint statusCode );
         void setReason( std::string reason );
 
-        void setContentType( std::string typeStr );
         void setContentLength( uint length );
+
+        void setContentType( std::string typeStr );
 
         void configAsNotImplemented();
         void configAsNotFound();
@@ -78,12 +83,15 @@ class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
         uint getStatusCode();
         std::string getReason();
 
-        std::string getContentType();
         uint getContentLength();
+
+        void addSCGIRequestHeader( std::string name, std::string value );
 
         void addHdrPair( std::string name, std::string value );
 
-        HNPRR_RESULT_T sendHeaders();
+        HNPRR_RESULT_T sendSCGIResponseHeaders();
+
+        bool hasHeader( std::string name );
 
         const std::string& getURI() const;
         const std::string& getMethod() const;

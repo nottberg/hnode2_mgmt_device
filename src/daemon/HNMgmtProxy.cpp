@@ -394,7 +394,9 @@ HNProxyPocoHelper::waitForResponse( HNProxyTicket *reqTicket )
 
     rspMsg.setStatusCode( m_response.getStatus() );
     rspMsg.setReason( m_response.getReason() );
-    rspMsg.setContentLength( m_response.getContentLength() );
+
+    if( m_response.getContentLength() != (-1) )
+        rspMsg.setContentLength( m_response.getContentLength() );
 
     for( pn::NameValueCollection::ConstIterator it = m_response.begin(); it != m_response.end(); it++ )
     {

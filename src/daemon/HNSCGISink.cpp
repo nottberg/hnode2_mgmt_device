@@ -447,26 +447,6 @@ HNSCGIChunkQueue::parseNetStrEnd()
    return HNSS_RESULT_PARSE_WAIT;
 }
 
-#if 0
-HNSCGIReqRsp::HNSCGIReqRsp()
-{
-
-}
-
-HNSCGIReqRsp::~HNSCGIReqRsp()
-{
-
-}
-
-void
-HNSCGIReqRsp::addHdrPair( std::string name, std::string value )
-{
-    //printf( "addHdrPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
-    
-    m_paramMap.insert( std::pair<std::string, std::string>(name, value) );
-}
-#endif
-
 HNSCGISinkClient::HNSCGISinkClient( uint fd, HNSCGISink *parent )
 : m_curRR( fd ), m_filebuf( fd, (std::ios::in|std::ios::out|std::ios::binary) ), m_iostream( &m_filebuf)
 {
@@ -593,8 +573,8 @@ HNSCGISinkClient::rxNextParse()
                 case HNSS_RESULT_PARSE_COMPLETE:
                     //printf( "Value Null Str(%lu): %*.*s\n", m_curHdrValue.size(), (int)m_curHdrValue.size(), (int)m_curHdrValue.size(), m_curHdrValue.c_str() );
                     
-                    m_curRR.getRequest().addHdrPair( m_curHdrName, m_curHdrValue );
-                                        
+                    m_curRR.getRequest().addSCGIRequestHeader( m_curHdrName, m_curHdrValue );
+
                     m_rcvHdrLen += ( m_curHdrValue.size() + 1 );
                    
                     //printf( "Value exp: %u,  rcv: %u\n", m_expHdrLen, m_rcvHdrLen );
@@ -945,7 +925,7 @@ HNSCGISink::runSCGILoop()
     
                     std::cout << "HNSCGISink::Received proxy response" << std::endl;
 
-                    HNPRR_RESULT_T status = response->getResponse().sendHeaders();
+                    HNPRR_RESULT_T status = response->getResponse().sendSCGIResponseHeaders();
 
                     while( status == HNPRR_RESULT_MSG_CONTENT )
                     {
