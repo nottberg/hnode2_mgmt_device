@@ -37,7 +37,14 @@ HNProxyHTTPMsg::addSCGIRequestHeader( std::string name, std::string value )
     // capital underscore instead of dash versions of the names.
     // Here segregate that style of header into a seperate list and
     // translate some of them into the more common format.
-    if( name.find('_') != std::string::npos )
+    if( Poco::icompare( name, "SCGI" ) == 0 )
+    {
+        // Header is the special SCGI header
+        printf( "addCGIVarPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
+        m_cgiVarMap.insert( std::pair<std::string, std::string>(name, value) );
+        return;
+    }
+    else if( name.find('_') != std::string::npos )
     {
         // Header contains an underscore so add it to CGI variable map.
         printf( "addCGIVarPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
@@ -51,7 +58,9 @@ HNProxyHTTPMsg::addSCGIRequestHeader( std::string name, std::string value )
         }
         else if( Poco::icompare( name, "CONTENT_TYPE") == 0 )
         {
-            addHdrPair( "Content-Type", value );
+            if( value.empty() == false )
+                addHdrPair( "Content-Type", value );
+
             return;
         }
         else if( Poco::icompare( name, "REQUEST_URI") == 0 )
@@ -235,24 +244,27 @@ HNProxyHTTPMsg::sendSCGIResponseHeaders()
     if( m_cSink == NULL )
         return HNPRR_RESULT_FAILURE;
 
-    std::cout << "SCGIResponseHeaders - 2" << std::endl;
+    std::cout << "SCGIResponseHeaders - 2 - Status: " << getStatusCode() << "  Reason: " << getReason() << std::endl;
 
     std::ostream *outStream = m_cSink->getSinkStreamRef();
 
     // Add the Status header
     *outStream << "Status: " << getStatusCode() << " " << getReason() << "\r\n";
 
-    // Output other headers
+    // Output other headers    
     for( std::map< std::string, std::string >::iterator hit = m_paramMap.begin(); hit != m_paramMap.end(); hit++ )
     {
+        std::cout << "SCGIResponseHeaders - 3 - Name: " << hit->first << "  Value: " << hit->second << std::endl;
         *outStream << hit->first << ": " << hit->second << "\r\n";
     }
- 
+
     // Add a blank line to mark the end of the headers
     *outStream << "\r\n";
 
     // Push this first bit to the server.
     outStream->flush();
+
+    std::cout << "SCGIResponseHeaders - 4 - eof: " << outStream->eof() << "  fail: " << outStream->fail() << "  bad: " << outStream->bad() << std::endl;
 
     // Move to content send    
     return HNPRR_RESULT_MSG_CONTENT;
@@ -290,17 +302,28 @@ HNPRR_RESULT_T
 HNProxyHTTPMsg::xferContentChunk( uint maxChunkLength )
 {
     char buff[4096];
+    uint contentLength = 0;
 
     if( (m_cSource == NULL) || (m_cSink == NULL) )
         return HNPRR_RESULT_FAILURE;
+
+    // If content length is 0, don't send anything
+    if( hasHeader( "Content-Length" ) == true )
+    {
+        contentLength = getContentLength();
+
+        if( contentLength == 0 )
+        {
+           std::cout << "xferContentChunk - No content" << std::endl;
+            return HNPRR_RESULT_MSG_COMPLETE;
+        }
+    }
 
     std::istream *is = m_cSource->getSourceStreamRef();
     std::ostream *os = m_cSink->getSinkStreamRef();
 
     if( hasHeader( "Content-Length" ) == true )
     {
-        uint contentLength = getContentLength();
-
         if( m_contentMoved >= contentLength )
             return HNPRR_RESULT_MSG_COMPLETE;
 
@@ -311,10 +334,12 @@ HNProxyHTTPMsg::xferContentChunk( uint maxChunkLength )
         is->read( buff, bytesToMove );
         std::streamsize bytesRead = is->gcount();
         os->write( buff, bytesRead );
- 
-        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << std::endl;
 
         m_contentMoved += bytesRead;
+
+        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << "  totalMoved: " << m_contentMoved << "  contentLength: " << contentLength << std::endl;
+        std::cout << "xferContentChunk - is - eof: " << is->eof() << "  fail: " << is->fail() << "  bad: " << is->bad() << std::endl;
+        std::cout << "xferContentChunk - os - eof: " << os->eof() << "  fail: " << os->fail() << "  bad: " << os->bad() << std::endl;
 
         if( (m_contentMoved < contentLength) && (is->eof() == false) )
             return HNPRR_RESULT_MSG_CONTENT;
@@ -326,8 +351,12 @@ HNProxyHTTPMsg::xferContentChunk( uint maxChunkLength )
         is->read( buff, bytesToMove );
         std::streamsize bytesRead = is->gcount();
         os->write( buff, bytesRead );
- 
-        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << std::endl;
+
+        m_contentMoved += bytesRead;
+
+        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << "  totalMoved: " << m_contentMoved << std::endl;
+        std::cout << "xferContentChunk - is - eof: " << is->eof() << "  fail: " << is->fail() << "  bad: " << is->bad() << std::endl;
+        std::cout << "xferContentChunk - os - eof: " << os->eof() << "  fail: " << os->fail() << "  bad: " << os->bad() << std::endl;
 
         if( is->eof() == false )
             return HNPRR_RESULT_MSG_CONTENT;
@@ -348,6 +377,7 @@ HNProxyHTTPMsg::getSourceStreamRef()
 std::ostream* 
 HNProxyHTTPMsg::getSinkStreamRef()
 {
+    std::cout << "HNProxyHTTPMsg::getSinkStreamRef - m_localContent" << std::endl;
     return &m_localContent;
 }
 

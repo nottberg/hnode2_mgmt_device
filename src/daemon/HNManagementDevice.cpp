@@ -607,7 +607,12 @@ HNManagementDevice::checkForProxyRequest( HNProxyHTTPReqRsp *reqRR )
     rtnTicket->setCRC32ID( crc32ID );
     rtnTicket->setAddress( dcInfo.getAddress() );
     rtnTicket->setPort( dcInfo.getPort() );
-    // rtnTicket->setProxyPrefix();
+    rtnTicket->setQueryStr( uri.getRawQuery() );
+
+    // Extract the remainder of the path for 
+    // use when constructing the proxy request
+    pathStrs.erase( pathStrs.begin(), pathStrs.begin()+4);
+    rtnTicket->buildProxyPath( pathStrs );
 
     return rtnTicket;
 }

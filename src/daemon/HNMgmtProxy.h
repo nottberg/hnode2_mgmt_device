@@ -46,11 +46,16 @@ class HNProxyTicket
         void setCRC32ID( std::string id );
         void setAddress( std::string addr );
         void setPort( uint16_t port );
+        void setQueryStr( std::string query );
+
+        void buildProxyPath( std::vector< std::string > &segments );
 
         std::string getCRC32ID();
         std::string getAddress();
         uint16_t getPort();
-        std::string getPath();
+        std::string getProxyPath();
+        std::string getQueryStr();
+
 
         HNProxyHTTPReqRsp* getRR();
 
@@ -60,8 +65,8 @@ class HNProxyTicket
         std::string  m_crc32ID;
         std::string  m_address;
         uint16_t     m_port;
-
-
+        std::string  m_queryStr;
+        std::string  m_proxyPathStr;
 };
 
 // Perform the proxy request operations

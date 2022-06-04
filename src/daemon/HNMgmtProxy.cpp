@@ -55,6 +55,22 @@ HNProxyTicket::setPort( uint16_t port )
     m_port = port;
 }
 
+void 
+HNProxyTicket::setQueryStr( std::string query )
+{
+    m_queryStr = query;
+}
+
+void 
+HNProxyTicket::buildProxyPath( std::vector< std::string > &segments )
+{
+    m_proxyPathStr.clear();
+    for( std::vector< std::string >::iterator it = segments.begin(); it != segments.end(); it++ )
+    {
+        m_proxyPathStr += "/" + *it;
+    }
+}
+
 std::string
 HNProxyTicket::getCRC32ID()
 {
@@ -74,9 +90,15 @@ HNProxyTicket::getPort()
 }
 
 std::string
-HNProxyTicket::getPath()
+HNProxyTicket::getQueryStr()
 {
-    return "/hnode2/irrigation/status";
+    return m_queryStr;
+}
+
+std::string
+HNProxyTicket::getProxyPath()
+{
+    return m_proxyPathStr;
 }
 
 HNProxyHTTPReqRsp* 
@@ -346,6 +368,7 @@ HNProxyPocoHelper::getSourceStreamRef()
 std::ostream* 
 HNProxyPocoHelper::getSinkStreamRef()
 {
+    std::cout << "HNProxyPocoHelper::getSinkStreamRef - m_reqStream" << std::endl;
     return m_reqStream;
 }
 
@@ -356,7 +379,8 @@ HNProxyPocoHelper::init( HNProxyTicket *reqTicket )
     m_uri.setScheme( "http" );
     m_uri.setHost( reqTicket->getAddress() );
     m_uri.setPort( reqTicket->getPort() );
-    m_uri.setPath( reqTicket->getPath() ); // i.e. "/hnode2/irrigation/status"
+    m_uri.setRawQuery( reqTicket->getQueryStr() );
+    m_uri.setPath( reqTicket->getProxyPath() ); 
 
     // Setup session object
     m_session.setHost( m_uri.getHost() );

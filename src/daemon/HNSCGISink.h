@@ -34,76 +34,15 @@ typedef enum HNSCGISinkResultEnum
     HNSS_RESULT_CLIENT_DONE
 }HNSS_RESULT_T;
 
-class HNSCGIChunk
-{
-    private:
-        // Storage for some data
-        uint8_t  m_data[4096];
-        
-        // Start and end index
-        uint m_startIdx;
-        uint m_endIdx;
-
-        // Current point where parsing is occuring.
-        uint m_parseIdx;
-        
-        // How much is used
-        uint m_length;
-
-        uint getInsertPos( uint8_t **bufPtr );
-        
-    public:
-        HNSCGIChunk();
-       ~HNSCGIChunk();
-    
-        bool isConsumed();       
-        bool hasSpace();
-       
-        HNSS_RESULT_T recvData( int fd );
-        
-        HNSS_RESULT_T peekNextByte( uint8_t &nxtChar );
-        
-        void consumeByte();
-        void consumeBytes( uint byteCnt );
-        
-        HNSS_RESULT_T extractNetStrStart( std::string &lenStr );
-        HNSS_RESULT_T extractNullStr( std::string &nullStr );
-        HNSS_RESULT_T extractNetStrEnd();        
-};
-    
-class HNSCGIChunkQueue
-{
-    private:
-        std::list< HNSCGIChunk* > m_chunkList;
-    
-        std::string m_partialStr;
-        
-    public:
-        HNSCGIChunkQueue();
-       ~HNSCGIChunkQueue();
-       
-        HNSS_RESULT_T recvData( int fd );
-
-        void resetParseState();
-        
-        HNSS_RESULT_T parseNetStrStart( uint &headerLength );
-
-        HNSS_RESULT_T parseNullStr( std::string &name );
-        
-        HNSS_RESULT_T parseNetStrEnd();
-        
-};
-
 typedef enum HNSCGISinkClientStreamState
 {
-    HNSCGI_SS_IDLE,           // In between requests.
-    HNSCGI_SS_HDR_NSTR_LEN,   // Waiting for start of the header netstring
-    HNSCGI_SS_HDR_DATA_NAME,  // Waiting for the next header name to be recieved
-    HNSCGI_SS_HDR_DATA_VALUE, // Waiting for the next header value to be recieved
-    HNSCGI_SS_HDR_NSTR_COMMA, // Waiting for header netstring trailing comma
-    HNSCGI_SS_PAYLOAD,        // Waiting for the Content Length of payload
-    HNSCGI_SS_DONE,           // Request RX is complete 
-    HNSCGI_SS_ERROR           // An error occurred during processing.
+    HNSCGI_SS_IDLE,              // In between requests.
+    HNSCGI_SS_HDR_NSTR_LEN,      // Extract the length part of the header netstring
+    HNSCGI_SS_HDR_ACCUMULATE,    // Accumulate all of the expected bytes for the header netstring.
+    HNSCGI_SS_HDR_EXTRACT_PAIRS, // Parse the netstring buffer into header name-value pairs.
+    HNSCGI_SS_HDR_NSTR_COMMA,    // Consume the comma at the end of the header net string
+    HNSCGI_SS_HDR_DONE,          // Request Header has been parsed. 
+    HNSCGI_SS_ERROR              // An error occurred during processing.
 }HNSC_SS_T;
 
 class HNSCGISinkClient : public HNPRRContentSource, public HNPRRContentSink
@@ -111,23 +50,31 @@ class HNSCGISinkClient : public HNPRRContentSource, public HNPRRContentSink
         uint               m_fd;
         HNSCGISink        *m_parent;
 
-        HNSCGIChunkQueue   m_rxQueue;
         HNProxyHTTPReqRsp  m_curRR;
                
         HNSC_SS_T  m_rxState;
         
+        std::string m_partialStr;
+
         uint m_expHdrLen;
         uint m_rcvHdrLen;
         
-        std::string m_curHdrName;
-        std::string m_curHdrValue;
+        char *m_headerBuf;
         
-        __gnu_cxx::stdio_filebuf<char> m_filebuf;
-        std::iostream m_iostream; 
+        __gnu_cxx::stdio_filebuf<char> m_ifilebuf;
+        std::iostream m_istream; 
+
+        __gnu_cxx::stdio_filebuf<char> m_ofilebuf;
+        std::iostream m_ostream;
 
         void setRxParseState( HNSC_SS_T newState );
-        HNSS_RESULT_T rxNextParse();
+        HNSS_RESULT_T readRequestHeaders();
         
+        HNSS_RESULT_T readNetStrStart();
+        HNSS_RESULT_T fillRequestHeaderBuffer();
+        HNSS_RESULT_T extractHeaderPairsFromBuffer();
+        HNSS_RESULT_T consumeNetStrComma();
+
     public:
         HNSCGISinkClient( uint fd, HNSCGISink *parent );
        ~HNSCGISinkClient();
@@ -186,8 +133,6 @@ class HNSCGISink
         HNSCGISink();
        ~HNSCGISink();
 
-        //HNMDL_RESULT_T notifyDiscoverAdd( HNMDARecord &record );
-        //HNMDL_RESULT_T notifyDiscoverRemove( HNMDARecord &record );
         void setParentRequestQueue( HNSigSyncQueue *parentRequestQueue );
 
         HNSigSyncQueue* getProxyResponseQueue();
