@@ -1,3 +1,5 @@
+#if 0
+
 #include <iostream>
 #include <sstream>
 
@@ -422,3 +424,4 @@ HNProxyHTTPReqRsp::getParentTag()
     return m_parentTag;
 }
 
+#endif

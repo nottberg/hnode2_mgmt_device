@@ -65,9 +65,9 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
 
         HNRestPath* addProxyPath( std::string dispatchID, std::string operationID, HNRestDispatchInterface *dispatchInf );
         void registerProxyEndpointsFromOpenAPI( std::string openAPIJson );
-        HNProxyTicket* checkForProxyRequest( HNProxyHTTPReqRsp *reqRR );
-        HNOperationData* mapProxyRequest( HNProxyHTTPReqRsp *reqRR );
-        void handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData );
+        HNProxyTicket* checkForProxyRequest( HNSCGIRR *reqRR );
+        HNOperationData* mapProxyRequest( HNSCGIRR *reqRR );
+        void handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *opData );
 
         bool configExists();
         HNMD_RESULT_T initConfig();

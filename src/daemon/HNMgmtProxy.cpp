@@ -27,7 +27,7 @@ namespace pn  = Poco::Net;
 #define MAXEVENTS  8
 
 
-HNProxyTicket::HNProxyTicket( HNProxyHTTPReqRsp *parentRR )
+HNProxyTicket::HNProxyTicket( HNSCGIRR *parentRR )
 {
     m_parentRR = parentRR;
 }
@@ -101,7 +101,7 @@ HNProxyTicket::getProxyPath()
     return m_proxyPathStr;
 }
 
-HNProxyHTTPReqRsp* 
+HNSCGIRR* 
 HNProxyTicket::getRR()
 {
     return m_parentRR;
@@ -330,8 +330,8 @@ class HNProxyPocoHelper : public HNPRRContentSource, public HNPRRContentSink
 
         void init( HNProxyTicket *reqTicket );
 
-        HNPRR_RESULT_T initiateRequest( HNProxyTicket *reqTicket );
-        HNPRR_RESULT_T waitForResponse( HNProxyTicket *reqTicket );
+        HNSS_RESULT_T initiateRequest( HNProxyTicket *reqTicket );
+        HNSS_RESULT_T waitForResponse( HNProxyTicket *reqTicket );
 
         virtual std::istream* getSourceStreamRef();
         virtual std::ostream* getSinkStreamRef();
@@ -382,21 +382,25 @@ HNProxyPocoHelper::init( HNProxyTicket *reqTicket )
     m_uri.setRawQuery( reqTicket->getQueryStr() );
     m_uri.setPath( reqTicket->getProxyPath() ); 
 
+    std::cout << "Proxy Request URL: " << m_uri.getPathAndQuery() << std::endl;
+
     // Setup session object
     m_session.setHost( m_uri.getHost() );
     m_session.setPort( m_uri.getPort() );
 
     // Set up request object from info in ticket and originating request.
-    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
+    HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
+
+    std::cout << "Proxy Request Method: " << reqMsg.getMethod() << std::endl;
 
     m_request.setMethod( reqMsg.getMethod() );
     m_request.setURI( m_uri.getPathAndQuery() );
 }
 
-HNPRR_RESULT_T
+HNSS_RESULT_T
 HNProxyPocoHelper::initiateRequest( HNProxyTicket *reqTicket )
 {
-    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
+    HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
 
     // Send the request
     m_reqStream = &m_session.sendRequest( m_request );
@@ -404,13 +408,13 @@ HNProxyPocoHelper::initiateRequest( HNProxyTicket *reqTicket )
     // Associate the transfer stream
     reqMsg.setContentSink( this );
 
-    return (reqMsg.getContentLength() > 0) ? HNPRR_RESULT_MSG_CONTENT : HNPRR_RESULT_MSG_COMPLETE;
+    return (reqMsg.getContentLength() > 0) ? HNSS_RESULT_MSG_CONTENT : HNSS_RESULT_MSG_COMPLETE;
 }
 
-HNPRR_RESULT_T
+HNSS_RESULT_T
 HNProxyPocoHelper::waitForResponse( HNProxyTicket *reqTicket )
 {
-    HNProxyHTTPMsg &rspMsg = reqTicket->getRR()->getResponse();
+    HNSCGIMsg &rspMsg = reqTicket->getRR()->getRspMsg();
 
     // Wait for a response
     m_rspStream = &m_session.receiveResponse( m_response );
@@ -430,32 +434,32 @@ HNProxyPocoHelper::waitForResponse( HNProxyTicket *reqTicket )
     // Associate the transfer stream
     rspMsg.setContentSource( this );
 
-    return (rspMsg.getContentLength() > 0) ? HNPRR_RESULT_MSG_CONTENT : HNPRR_RESULT_MSG_COMPLETE;
+    return (rspMsg.getContentLength() > 0) ? HNSS_RESULT_MSG_CONTENT : HNSS_RESULT_MSG_COMPLETE;
 }
 
 HNPS_RESULT_T
 HNProxySequencer::executeProxyRequest( HNProxyTicket *reqTicket )
 {
-    HNPRR_RESULT_T  result;
-    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
+    HNSS_RESULT_T  result;
+    HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
     HNProxyPocoHelper *ph = new HNProxyPocoHelper();
 
     ph->init( reqTicket );
 
     result = ph->initiateRequest( reqTicket );
-    while( result == HNPRR_RESULT_MSG_CONTENT )
+    while( result == HNSS_RESULT_MSG_CONTENT )
     {
         result = reqMsg.xferContentChunk( 4096 );
     }
 
-    if( result != HNPRR_RESULT_MSG_COMPLETE )
+    if( result != HNSS_RESULT_MSG_COMPLETE )
     {
         return HNPS_RESULT_FAILURE;
     }
 
     result = ph->waitForResponse( reqTicket );
 
-    if( (result != HNPRR_RESULT_MSG_COMPLETE) && (result != HNPRR_RESULT_MSG_CONTENT) )
+    if( (result != HNSS_RESULT_MSG_COMPLETE) && (result != HNSS_RESULT_MSG_CONTENT) )
     {
         return HNPS_RESULT_FAILURE;
     }

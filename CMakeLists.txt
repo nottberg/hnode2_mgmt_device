@@ -22,8 +22,7 @@ ADD_DEFINITIONS( -DVERSION=${VERSION} )
 
 SET( HNMGMTD_SRC
      ${CMAKE_SOURCE_DIR}/src/daemon/hnmgmtd.cpp
-     ${CMAKE_SOURCE_DIR}/src/daemon/HNSCGISink.cpp
-     ${CMAKE_SOURCE_DIR}/src/daemon/HNProxyReqRsp.cpp     
+     ${CMAKE_SOURCE_DIR}/src/daemon/HNSCGISink.cpp    
      ${CMAKE_SOURCE_DIR}/src/daemon/HNMgmtProxy.cpp     
      ${CMAKE_SOURCE_DIR}/src/daemon/HNManagementDevice.cpp
      ${CMAKE_SOURCE_DIR}/src/daemon/HNManagedDeviceArbiter.cpp

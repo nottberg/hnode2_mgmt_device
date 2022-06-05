@@ -24,7 +24,7 @@
 
 #include <hnode2/HNSigSyncQueue.h>
 
-#include "HNProxyReqRsp.h"
+#include "HNSCGISink.h"
 
 //namespace pjs = Poco::JSON;
 //namespace pdy = Poco::Dynamic;
@@ -40,7 +40,7 @@ typedef enum HNProxySequencerResultEnum
 class HNProxyTicket
 {
     public:
-        HNProxyTicket( HNProxyHTTPReqRsp *parentRR );
+        HNProxyTicket( HNSCGIRR *parentRR );
        ~HNProxyTicket();
 
         void setCRC32ID( std::string id );
@@ -57,10 +57,10 @@ class HNProxyTicket
         std::string getQueryStr();
 
 
-        HNProxyHTTPReqRsp* getRR();
+        HNSCGIRR* getRR();
 
     private:
-        HNProxyHTTPReqRsp  *m_parentRR;
+        HNSCGIRR    *m_parentRR;
 
         std::string  m_crc32ID;
         std::string  m_address;

@@ -14,35 +14,448 @@
 #include <iostream>
 #include <sstream>
 
-#include "Poco/Thread.h"
-#include "Poco/Runnable.h"
+#include <Poco/String.h>
+#include <Poco/Thread.h>
+#include <Poco/Runnable.h>
 
 #include "HNSCGISink.h"
 
 #define MAXEVENTS  8
 
-HNSCGISinkClient::HNSCGISinkClient( uint fd, HNSCGISink *parent )
-: m_curRR( fd ), m_ofilebuf( fd, (std::ios::out|std::ios::binary) ), m_ifilebuf( fd, (std::ios::in|std::ios::binary) ), m_ostream( &m_ofilebuf ), m_istream( &m_ifilebuf )
+HNSCGIMsg::HNSCGIMsg()
+{
+    m_headerComplete = false;
+    m_dispatched = false;
+
+    m_cSource = NULL;
+    m_cSink = NULL;
+}
+
+HNSCGIMsg::~HNSCGIMsg()
+{
+
+}
+
+void 
+HNSCGIMsg::clearHeaders()
+{
+    m_statusCode = 0;
+    m_reason.clear();
+
+    m_contentMoved  = 0;
+
+    m_paramMap.clear();
+}
+
+void
+HNSCGIMsg::addSCGIRequestHeader( std::string name, std::string value )
+{
+    // Special handling for headers orginating from the SCGI layer
+    // The original CGI interface passed headers via ENV variables 
+    // which meant some of the common headers are passed with all
+    // capital underscore instead of dash versions of the names.
+    // Here segregate that style of header into a seperate list and
+    // translate some of them into the more common format.
+    if( Poco::icompare( name, "SCGI" ) == 0 )
+    {
+        // Header is the special SCGI header
+        printf( "addCGIVarPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
+        m_cgiVarMap.insert( std::pair<std::string, std::string>(name, value) );
+        return;
+    }
+    else if( name.find('_') != std::string::npos )
+    {
+        // Header contains an underscore so add it to CGI variable map.
+        printf( "addCGIVarPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
+        m_cgiVarMap.insert( std::pair<std::string, std::string>(name, value) );
+
+        // Do some special handling for some of the CGI values.
+        if( Poco::icompare( name, "CONTENT_LENGTH" ) == 0 )
+        {
+            addHdrPair( "Content-Length", value );
+            return;
+        }
+        else if( Poco::icompare( name, "CONTENT_TYPE") == 0 )
+        {
+            if( value.empty() == false )
+                addHdrPair( "Content-Type", value );
+
+            return;
+        }
+        else if( Poco::icompare( name, "REQUEST_URI") == 0 )
+        {
+            setURI( value );
+            return;
+        }
+        else if( Poco::icompare( name, "REQUEST_METHOD") == 0 )
+        {
+            setMethod( value );
+            return;
+        }
+
+        // Done processing this header
+        return;
+    }
+
+    // Not a CGI parameter so add as a normal header
+    addHdrPair( name, value );
+}
+
+void
+HNSCGIMsg::addHdrPair( std::string name, std::string value )
+{
+    printf( "addHdrPair - name: %s,  value: %s\n", name.c_str(), value.c_str() );
+    
+    // Handle content length specially so that we always get constant capilization. 
+    if( Poco::icompare( name, "Content-Length" ) == 0 )
+    {
+        m_paramMap.insert(std::pair< std::string, std::string >( "Content-Length", value ) );
+        return;
+    }
+
+    m_paramMap.insert( std::pair<std::string, std::string>(name, value) );
+}
+
+bool 
+HNSCGIMsg::hasHeader( std::string name )
+{
+    std::map< std::string, std::string >::iterator it = m_paramMap.find( name ); 
+
+    if( it == m_paramMap.end() )
+        return false;
+
+    return true;
+}
+
+const std::string& 
+HNSCGIMsg::getURI() const
+{
+    return m_uri;
+}
+
+const std::string& 
+HNSCGIMsg::getMethod() const
+{
+    return m_method;
+}
+
+void 
+HNSCGIMsg::setDispatched( bool value )
+{
+    m_dispatched = value;
+}
+
+void 
+HNSCGIMsg::setHeaderDone( bool value )
+{
+    m_headerComplete = value;
+}
+
+bool 
+HNSCGIMsg::isHeaderDone()
+{
+    return m_headerComplete;
+}
+
+bool 
+HNSCGIMsg::isDispatched()
+{
+    return m_dispatched;
+}
+
+void 
+HNSCGIMsg::setURI( std::string uri )
+{
+    m_uri = uri;
+}
+
+void 
+HNSCGIMsg::setMethod( std::string method )
+{
+    m_method = method;
+}
+
+void 
+HNSCGIMsg::setStatusCode( uint statusCode )
+{
+    m_statusCode = statusCode;
+}
+
+void 
+HNSCGIMsg::setReason( std::string reason )
+{
+    m_reason = reason;
+}
+
+void 
+HNSCGIMsg::setContentLength( uint length )
+{
+    char tmpBuf[64];
+    sprintf(tmpBuf, "%u", length);
+    m_paramMap.insert( std::pair<std::string, std::string>("Content-Length", tmpBuf) );
+}
+
+void 
+HNSCGIMsg::setContentType( std::string typeStr )
+{
+    m_paramMap.insert( std::pair<std::string, std::string>("Content-Type", typeStr) );
+}
+
+void 
+HNSCGIMsg::configAsNotImplemented()
+{
+    clearHeaders();
+
+    setStatusCode( 501 );
+    setReason("Not Implemented");
+    setContentLength( 0 );
+}
+
+void 
+HNSCGIMsg::configAsNotFound()
+{
+    clearHeaders();
+
+    setStatusCode( 404 );
+    setReason("Not Found");
+    setContentLength( 0 );
+}
+
+void 
+HNSCGIMsg::configAsInternalServerError()
+{
+    clearHeaders();
+
+    setStatusCode( 500 );
+    setReason("Internal Server Error");
+    setContentLength( 0 );
+}
+
+uint 
+HNSCGIMsg::getStatusCode()
+{
+    return m_statusCode;
+}
+
+std::string 
+HNSCGIMsg::getReason()
+{
+    return m_reason;
+}
+
+uint 
+HNSCGIMsg::getContentLength()
+{
+    std::map< std::string, std::string >::iterator it = m_paramMap.find( "Content-Length" ); 
+
+    if( it == m_paramMap.end() )
+        return 0;
+
+    return strtol( it->second.c_str(), NULL, 0);
+}
+
+HNSS_RESULT_T 
+HNSCGIMsg::sendSCGIResponseHeaders()
+{
+    std::cout << "SCGIResponseHeaders - 1" << std::endl;
+
+    // Get the output stream reference
+    if( m_cSink == NULL )
+        return HNSS_RESULT_FAILURE;
+
+    std::cout << "SCGIResponseHeaders - 2 - Status: " << getStatusCode() << "  Reason: " << getReason() << std::endl;
+
+    std::ostream *outStream = m_cSink->getSinkStreamRef();
+
+    // Add the Status header
+    *outStream << "Status: " << getStatusCode() << " " << getReason() << "\r\n";
+
+    // Output other headers    
+    for( std::map< std::string, std::string >::iterator hit = m_paramMap.begin(); hit != m_paramMap.end(); hit++ )
+    {
+        std::cout << "SCGIResponseHeaders - 3 - Name: " << hit->first << "  Value: " << hit->second << std::endl;
+        *outStream << hit->first << ": " << hit->second << "\r\n";
+    }
+
+    // Add a blank line to mark the end of the headers
+    *outStream << "\r\n";
+
+    // Push this first bit to the server.
+    outStream->flush();
+
+    std::cout << "SCGIResponseHeaders - 4 - eof: " << outStream->eof() << "  fail: " << outStream->fail() << "  bad: " << outStream->bad() << std::endl;
+
+    // Move to content send    
+    return HNSS_RESULT_MSG_CONTENT;
+}
+
+void 
+HNSCGIMsg::setContentSource( HNPRRContentSource *source )
+{
+    m_cSource = source;
+}
+
+void 
+HNSCGIMsg::setContentSink( HNPRRContentSink *sink )
+{
+    m_cSink = sink;
+}
+
+std::ostream&
+HNSCGIMsg::useLocalContentSource()
+{
+    m_localContent.clear();
+    setContentSource( this );
+    return m_localContent; 
+}
+
+void
+HNSCGIMsg::finalizeLocalContent()
+{
+    uint size = m_localContent.tellp();
+    std::cout << "finalizeLocalContent: " << size << std::endl;
+    setContentLength(size);
+}
+
+HNSS_RESULT_T 
+HNSCGIMsg::xferContentChunk( uint maxChunkLength )
+{
+    char buff[4096];
+    uint contentLength = 0;
+
+    if( (m_cSource == NULL) || (m_cSink == NULL) )
+        return HNSS_RESULT_FAILURE;
+
+    // If content length is 0, don't send anything
+    if( hasHeader( "Content-Length" ) == true )
+    {
+        contentLength = getContentLength();
+
+        if( contentLength == 0 )
+        {
+           std::cout << "xferContentChunk - No content" << std::endl;
+            return HNSS_RESULT_MSG_COMPLETE;
+        }
+    }
+
+    std::istream *is = m_cSource->getSourceStreamRef();
+    std::ostream *os = m_cSink->getSinkStreamRef();
+
+    if( hasHeader( "Content-Length" ) == true )
+    {
+        if( m_contentMoved >= contentLength )
+            return HNSS_RESULT_MSG_COMPLETE;
+
+        uint bytesToMove = contentLength - m_contentMoved;
+        if( bytesToMove > sizeof(buff) )
+            bytesToMove = sizeof(buff);
+
+        is->read( buff, bytesToMove );
+        std::streamsize bytesRead = is->gcount();
+        os->write( buff, bytesRead );
+
+        m_contentMoved += bytesRead;
+
+        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << "  totalMoved: " << m_contentMoved << "  contentLength: " << contentLength << std::endl;
+        std::cout << "xferContentChunk - is - eof: " << is->eof() << "  fail: " << is->fail() << "  bad: " << is->bad() << std::endl;
+        std::cout << "xferContentChunk - os - eof: " << os->eof() << "  fail: " << os->fail() << "  bad: " << os->bad() << std::endl;
+
+        if( (m_contentMoved < contentLength) && (is->eof() == false) )
+            return HNSS_RESULT_MSG_CONTENT;
+    }
+    else
+    {
+        uint bytesToMove = sizeof(buff);
+
+        is->read( buff, bytesToMove );
+        std::streamsize bytesRead = is->gcount();
+        os->write( buff, bytesRead );
+
+        m_contentMoved += bytesRead;
+
+        std::cout << "xferContentChunk - bytesMoved: " << bytesRead << "  totalMoved: " << m_contentMoved << std::endl;
+        std::cout << "xferContentChunk - is - eof: " << is->eof() << "  fail: " << is->fail() << "  bad: " << is->bad() << std::endl;
+        std::cout << "xferContentChunk - os - eof: " << os->eof() << "  fail: " << os->fail() << "  bad: " << os->bad() << std::endl;
+
+        if( is->eof() == false )
+            return HNSS_RESULT_MSG_CONTENT;
+    }
+    
+    // Push everything to server before closing out.
+    os->flush();
+
+    return HNSS_RESULT_MSG_COMPLETE;
+}
+
+std::istream* 
+HNSCGIMsg::getSourceStreamRef()
+{
+    return &m_localContent;
+}
+
+std::ostream* 
+HNSCGIMsg::getSinkStreamRef()
+{
+    std::cout << "HNSCGIMsg::getSinkStreamRef - m_localContent" << std::endl;
+    return &m_localContent;
+}
+
+void 
+HNSCGIMsg::debugPrint()
+{
+    std::cout << "==== Proxy Request ====" << std::endl;
+    std::cout << "== Header Parameter List ==" << std::endl;
+
+    for( std::map< std::string, std::string >::iterator mip = m_paramMap.begin(); mip != m_paramMap.end(); mip++ )
+    {
+        std::cout << mip->first << " :    " << mip->second << std::endl;
+    }
+}
+
+
+
+
+
+
+
+
+HNSCGIRR::HNSCGIRR( uint fd, HNSCGISink *parent )
+: m_ofilebuf( fd, (std::ios::out|std::ios::binary) ), m_ifilebuf( fd, (std::ios::in|std::ios::binary) ), m_ostream( &m_ofilebuf ), m_istream( &m_ifilebuf )
 {
     m_fd      = fd;
-
-    //__gnu_cxx::stdio_filebuf<char> filebuf( m_fd, std::ios::in ); // 1
-    //std:fstream m_fstream (&filebuf); // 2
 
     m_parent  = parent;
     m_rxState = HNSCGI_SS_IDLE;
 
-    m_curRR.getRequest().setContentSource( this );
-    m_curRR.getResponse().setContentSink( this );
+    m_request.setContentSource( this );
+    m_response.setContentSink( this );
 }
 
-HNSCGISinkClient::~HNSCGISinkClient()
+HNSCGIRR::~HNSCGIRR()
 {
 
 }       
 
+uint 
+HNSCGIRR::getSCGIFD()
+{
+    return m_fd;
+}
+
+HNSCGIMsg&
+HNSCGIRR::getReqMsg()
+{
+    return m_request;
+}
+
+HNSCGIMsg&
+HNSCGIRR::getRspMsg()
+{
+    return m_response;
+}
+
 void
-HNSCGISinkClient::setRxParseState( HNSC_SS_T newState )
+HNSCGIRR::setRxParseState( HNSC_SS_T newState )
 {
     printf( "setRxParseState - newState: %u\n", newState );
 
@@ -51,7 +464,7 @@ HNSCGISinkClient::setRxParseState( HNSC_SS_T newState )
 }
 
 HNSS_RESULT_T 
-HNSCGISinkClient::readNetStrStart()
+HNSCGIRR::readNetStrStart()
 {
     char c;
 
@@ -95,7 +508,7 @@ HNSCGISinkClient::readNetStrStart()
 }
 
 HNSS_RESULT_T 
-HNSCGISinkClient::fillRequestHeaderBuffer()
+HNSCGIRR::fillRequestHeaderBuffer()
 {
     char *bufPtr = (m_headerBuf + m_rcvHdrLen);
     uint bytesLeft = (m_expHdrLen - m_rcvHdrLen);
@@ -124,7 +537,7 @@ HNSCGISinkClient::fillRequestHeaderBuffer()
 }
 
 HNSS_RESULT_T 
-HNSCGISinkClient::extractHeaderPairsFromBuffer()
+HNSCGIRR::extractHeaderPairsFromBuffer()
 {
     std::string curHdrName;
     std::string curHdrValue;
@@ -154,7 +567,7 @@ HNSCGISinkClient::extractHeaderPairsFromBuffer()
             else
             {
                 // Finished with header and value.  Commit the strings to the header map
-                m_curRR.getRequest().addSCGIRequestHeader( curHdrName, curHdrValue );
+                m_request.addSCGIRequestHeader( curHdrName, curHdrValue );
 
                 // Clear the collected strings.
                 curHdrName.clear();
@@ -179,7 +592,7 @@ HNSCGISinkClient::extractHeaderPairsFromBuffer()
 }
 
 HNSS_RESULT_T 
-HNSCGISinkClient::consumeNetStrComma()
+HNSCGIRR::consumeNetStrComma()
 {
     char c;
 
@@ -202,7 +615,7 @@ HNSCGISinkClient::consumeNetStrComma()
 }
 
 HNSS_RESULT_T
-HNSCGISinkClient::readRequestHeaders()
+HNSCGIRR::readRequestHeaders()
 {
     HNSS_RESULT_T result = HNSS_RESULT_PARSE_ERR;
 
@@ -305,7 +718,7 @@ HNSCGISinkClient::readRequestHeaders()
             {
                 case HNSS_RESULT_PARSE_COMPLETE:
                     //printf( "HDR_NSTR End:\n");
-                    m_curRR.getRequest().setHeaderDone( true );
+                    m_request.setHeaderDone( true );
 
                     setRxParseState( HNSCGI_SS_HDR_DONE );
                     
@@ -334,7 +747,7 @@ HNSCGISinkClient::readRequestHeaders()
 }
 
 HNSS_RESULT_T 
-HNSCGISinkClient::recvData()
+HNSCGIRR::recvData()
 {
     HNSS_RESULT_T result;
     
@@ -371,7 +784,7 @@ HNSCGISinkClient::recvData()
         case HNSS_RESULT_REQUEST_READY:
         {
             printf( "Request Ready\n");
-            m_curRR.getRequest().debugPrint();
+            m_request.debugPrint();
             return HNSS_RESULT_REQUEST_READY;
         }
 
@@ -382,7 +795,7 @@ HNSCGISinkClient::recvData()
 
 #if 0
 HNSS_RESULT_T 
-HNSCGISinkClient::sendData( std::ostream &outStream )
+HNSCGIRR::sendData( std::ostream &outStream )
 {
     HNSS_RESULT_T result;
     //char rtnBuf[1024];
@@ -391,35 +804,37 @@ HNSCGISinkClient::sendData( std::ostream &outStream )
 
     ssize_t bytesWritten = send( m_fd, rtnBuf, strlen(rtnBuf), 0 );
  
-    printf( "HNSCGISinkClient::sendData - fd: %u  bytesWritten: %lu\n", m_fd, bytesWritten );
+    printf( "HNSCGIRR::sendData - fd: %u  bytesWritten: %lu\n", m_fd, bytesWritten );
     
     return HNSS_RESULT_SUCCESS;
 }
 #endif
 
 void
-HNSCGISinkClient::finish()
+HNSCGIRR::finish()
 {
     printf( "Finishing client %d\n", m_fd );
     close( m_fd );
 }
 
+#if 0
 HNProxyHTTPReqRsp*
-HNSCGISinkClient::getReqRsp()
+HNSCGIRR::getReqRsp()
 {
     return &m_curRR;
 }
+#endif
 
 std::istream*
-HNSCGISinkClient::getSourceStreamRef()
+HNSCGIRR::getSourceStreamRef()
 {
     return &m_istream;
 }
 
 std::ostream*
-HNSCGISinkClient::getSinkStreamRef()
+HNSCGIRR::getSinkStreamRef()
 {
-    std::cout << "HNSCGISinkClient::getSinkStreamRef - m_osteam, m_fd: " << m_fd << std::endl;
+    std::cout << "HNSCGIRR::getSinkStreamRef - m_osteam, m_fd: " << m_fd << std::endl;
     return &m_ostream;
 }
 
@@ -595,26 +1010,26 @@ HNSCGISink::runSCGILoop()
             {
                 while( m_proxyResponseQueue.getPostedCnt() )
                 {
-                    HNProxyHTTPReqRsp *response = (HNProxyHTTPReqRsp *) m_proxyResponseQueue.aquireRecord();
+                    HNSCGIRR *response = (HNSCGIRR *) m_proxyResponseQueue.aquireRecord();
 
-                    std::map< int, HNSCGISinkClient* >::iterator it = m_clientMap.find( response->getParentTag() );
-                    if( it == m_clientMap.end() )
+                    std::map< int, HNSCGIRR* >::iterator it = m_rrMap.find( response->getSCGIFD() );
+                    if( it == m_rrMap.end() )
                     {
-                        syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", response->getParentTag() );
+                        syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", response->getSCGIFD() );
                         //return HNSS_RESULT_FAILURE;
                     }
     
                     std::cout << "HNSCGISink::Received proxy response" << std::endl;
 
-                    HNPRR_RESULT_T status = response->getResponse().sendSCGIResponseHeaders();
+                    HNSS_RESULT_T status = response->getRspMsg().sendSCGIResponseHeaders();
 
-                    while( status == HNPRR_RESULT_MSG_CONTENT )
+                    while( status == HNSS_RESULT_MSG_CONTENT )
                     {
-                        status = response->getResponse().xferContentChunk( 4096 );
+                        status = response->getRspMsg().xferContentChunk( 4096 );
                     }
 
-                    it->second->finish();
-                    m_clientMap.erase(it);
+                    response->finish();
+                    m_rrMap.erase(it);
                 }
             }           
             else
@@ -801,8 +1216,8 @@ HNSCGISink::processNewClientConnections( )
 
         syslog( LOG_ERR, "Adding client - sfd: %d", infd );
 
-        HNSCGISinkClient *client = new HNSCGISinkClient( infd, this );
-        m_clientMap.insert( std::pair< int, HNSCGISinkClient* >( infd, client ) );
+        HNSCGIRR *client = new HNSCGIRR( infd, this );
+        m_rrMap.insert( std::pair< int, HNSCGIRR* >( infd, client ) );
 
         addSocketToEPoll( infd );
     }
@@ -814,7 +1229,7 @@ HNSCGISink::processNewClientConnections( )
 HNSS_RESULT_T
 HNSCGISink::closeClientConnection( int clientFD )
 {
-    m_clientMap.erase( clientFD );
+    m_rrMap.erase( clientFD );
 
     removeSocketFromEPoll( clientFD );
 
@@ -833,8 +1248,8 @@ HNSCGISink::processClientRequest( int cfd )
     syslog( LOG_ERR, "Process client data - sfd: %d", cfd );
     
     // Find the client record
-    std::map< int, HNSCGISinkClient* >::iterator it = m_clientMap.find( cfd );
-    if( it == m_clientMap.end() )
+    std::map< int, HNSCGIRR* >::iterator it = m_rrMap.find( cfd );
+    if( it == m_rrMap.end() )
     {
         syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", cfd );
         return HNSS_RESULT_FAILURE;
@@ -853,59 +1268,21 @@ HNSCGISink::processClientRequest( int cfd )
 
         case HNSS_RESULT_REQUEST_READY:
         {
-            queueProxyRequest( it->second->getReqRsp() );
+            queueProxyRequest( it->second );
             return HNSS_RESULT_SUCCESS;
         }
         break;
 
     }
 
-#if 0
-    case HNSS_RESULT_CLIENT_DONE:
-    {
-        printf( "Finishing client %d\n", cfd);
-        close(cfd);
-        m_clientMap.erase(it);
-        return HNSS_RESULT_SUCCESS;
-    }
-#endif
-
-    // Check if action should be taken for any requests
-    
     return HNSS_RESULT_SUCCESS;
 }
 
 void 
-HNSCGISink::queueProxyRequest( HNProxyHTTPReqRsp *reqPtr )
+HNSCGISink::queueProxyRequest( HNSCGIRR *reqPtr )
 {
     if( m_parentRequestQueue == NULL )
         return;
 
     m_parentRequestQueue->postRecord( reqPtr );
 }
-
-#if 0
-void 
-HNSCGISink::markForSend( uint fd )
-{
-    // FIXME:  Temporary, this should be scheduled through the epoll loop instead.
-
-    // Find the client record
-    std::map< int, HNSCGISinkClient >::iterator it = m_clientMap.find( fd );
-    if( it == m_clientMap.end() )
-    {
-        syslog( LOG_ERR, "ERROR: Could not find client record - sfd: %d", fd );
-        //return HNSS_RESULT_FAILURE;
-    }
-    
-    // Attempt to receive data for current request
-    if( it->second.sendData() == HNSS_RESULT_FAILURE )
-    {
-        syslog( LOG_ERR, "ERROR: Failed while sending data - sfd: %d", fd );
-        //return HNSS_RESULT_FAILURE;
-    }
-
-}
-#endif
-
-

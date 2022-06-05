@@ -276,7 +276,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
             {
                 while( m_scgiRequestQueue.getPostedCnt() )
                 {
-                    HNProxyHTTPReqRsp *proxyRR = (HNProxyHTTPReqRsp *) m_scgiRequestQueue.aquireRecord();
+                    HNSCGIRR *proxyRR = (HNSCGIRR *) m_scgiRequestQueue.aquireRecord();
 
                     std::cout << "HNManagementDevice::Received proxy request" << std::endl;
 
@@ -284,7 +284,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
                     if( proxyTicket != NULL )
                     {
-                        std::cout << "Proxy request to device: " << std::endl;
+                        std::cout << "Proxy request to device: " << proxyTicket->getCRC32ID() << std::endl;
                         m_proxySeq.getRequestQueue()->postRecord( proxyTicket );
                         continue;
                     }
@@ -293,7 +293,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
                     if( opData == NULL )
                     {
-                        proxyRR->getResponse().configAsNotFound();
+                        proxyRR->getRspMsg().configAsNotFound();
                         reqsink.getProxyResponseQueue()->postRecord( proxyRR );
                     }
                     else
@@ -314,7 +314,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
                     std::cout << "HNManagementDevice::Received proxy response" << std::endl;
 
-                    HNProxyHTTPReqRsp *proxyRR = proxyTicket->getRR();
+                    HNSCGIRR *proxyRR = proxyTicket->getRR();
 
                     delete proxyTicket;
 
@@ -653,12 +653,12 @@ HNManagementDevice::registerProxyEndpointsFromOpenAPI( std::string openAPIJson )
 }
 
 HNProxyTicket* 
-HNManagementDevice::checkForProxyRequest( HNProxyHTTPReqRsp *reqRR )
+HNManagementDevice::checkForProxyRequest( HNSCGIRR *reqRR )
 {
     std::vector< std::string > pathStrs;
-    Poco::URI uri( reqRR->getRequest().getURI() );
+    Poco::URI uri( reqRR->getReqMsg().getURI() );
 
-    std::cout << "checkForProxyRequest - method: " << reqRR->getRequest().getMethod() << std::endl;
+    std::cout << "checkForProxyRequest - method: " << reqRR->getReqMsg().getMethod() << std::endl;
     std::cout << "checkForProxyRequest - URI: " << uri.toString() << std::endl;
 
     // Break the uri into segments
@@ -680,6 +680,7 @@ HNManagementDevice::checkForProxyRequest( HNProxyHTTPReqRsp *reqRR )
     HNMDL_RESULT_T result = arbiter.lookupConnectionInfo( crc32ID, HMDAR_ADDRTYPE_IPV4, dcInfo );
     if( result != HNMDL_RESULT_SUCCESS )
     {
+        std::cout << "WARNING: Proxy failed to lookup device: " << crc32ID << std::endl;
         return NULL;
     }
 
@@ -700,14 +701,14 @@ HNManagementDevice::checkForProxyRequest( HNProxyHTTPReqRsp *reqRR )
 }
 
 HNOperationData*
-HNManagementDevice::mapProxyRequest( HNProxyHTTPReqRsp *reqRR )
+HNManagementDevice::mapProxyRequest( HNSCGIRR *reqRR )
 {
     HNOperationData *opData = NULL;
     std::vector< std::string > pathStrs;
 
-    Poco::URI uri( reqRR->getRequest().getURI() );
+    Poco::URI uri( reqRR->getReqMsg().getURI() );
 
-    std::cout << "mapProxyRequest - method: " << reqRR->getRequest().getMethod() << std::endl;
+    std::cout << "mapProxyRequest - method: " << reqRR->getReqMsg().getMethod() << std::endl;
     std::cout << "mapProxyRequest - URI: " << uri.toString() << std::endl;
 
     // Break the uri into segments
@@ -717,7 +718,7 @@ HNManagementDevice::mapProxyRequest( HNProxyHTTPReqRsp *reqRR )
     for( std::vector< HNRestPath >::iterator it = m_proxyPathList.begin(); it != m_proxyPathList.end(); it++ )
     {
         std::cout << "Check handler: " << it->getOpID() << std::endl;
-        opData = it->checkForHandler( reqRR->getRequest().getMethod(), pathStrs );
+        opData = it->checkForHandler( reqRR->getReqMsg().getMethod(), pathStrs );
         if( opData != NULL )
             return opData;
     }
@@ -727,10 +728,8 @@ HNManagementDevice::mapProxyRequest( HNProxyHTTPReqRsp *reqRR )
 }
 
 void 
-HNManagementDevice::handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData )
+HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *opData )
 {
-    //HNIDActionRequest action;
-
     std::cout << "HNManagementDevice::handleLocalProxyRequest() - entry" << std::endl;
     std::cout << "  dispatchID: " << opData->getDispatchID() << std::endl;
     std::cout << "  opID: " << opData->getOpID() << std::endl;
@@ -740,7 +739,7 @@ HNManagementDevice::handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperatio
     // GET "/hnode2/mgmt/status"
     if( "getStatus" == opID )
     {
-        std::ostream &msg = reqRR->getResponse().useLocalContentSource();
+        std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
         pjs::Object jsRoot;
 
         jsRoot.set( "state", "enable" );
@@ -751,19 +750,19 @@ HNManagementDevice::handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperatio
             pjs::Stringifier::stringify( jsRoot, msg );
         } catch( ... ) {
             // Send back not implemented
-            reqRR->getResponse().configAsInternalServerError();
+            reqRR->getRspMsg().configAsInternalServerError();
             return;
         }
 
-        reqRR->getResponse().finalizeLocalContent();
-        reqRR->getResponse().setContentType("application/json");
-        reqRR->getResponse().setStatusCode(200);
-        reqRR->getResponse().setReason("OK");
+        reqRR->getRspMsg().finalizeLocalContent();
+        reqRR->getRspMsg().setContentType("application/json");
+        reqRR->getRspMsg().setStatusCode(200);
+        reqRR->getRspMsg().setReason("OK");
         return;
     }
     else if( "getDeviceInventory" == opID )
     {
-        std::ostream &msg = reqRR->getResponse().useLocalContentSource();
+        std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
         pjs::Object jsRoot;
         pjs::Array jsDevArray;
 
@@ -807,19 +806,19 @@ HNManagementDevice::handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperatio
             pjs::Stringifier::stringify( jsRoot, msg );
         } catch( ... ) {
             // Send back not implemented
-            reqRR->getResponse().configAsInternalServerError();
+            reqRR->getRspMsg().configAsInternalServerError();
             return;
         }
 
-        reqRR->getResponse().finalizeLocalContent();
-        reqRR->getResponse().setContentType("application/json");
-        reqRR->getResponse().setStatusCode(200);
-        reqRR->getResponse().setReason("OK");
+        reqRR->getRspMsg().finalizeLocalContent();
+        reqRR->getRspMsg().setContentType("application/json");
+        reqRR->getRspMsg().setStatusCode(200);
+        reqRR->getRspMsg().setReason("OK");
         return;
     }
 
     // Send back not implemented
-    reqRR->getResponse().configAsNotFound();
+    reqRR->getRspMsg().configAsNotFound();
     return;
 }
 

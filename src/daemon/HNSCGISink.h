@@ -9,11 +9,12 @@
 #include <map>
 #include <list>
 #include <fstream>
+#include <sstream>
 
 #include <hnode2/HNSigSyncQueue.h>
 #include <hnode2/HNodeID.h>
 
-#include "HNProxyReqRsp.h"
+//#include "HNProxyReqRsp.h"
 
 // Forward declaration
 class HNSCGIRunner;
@@ -31,10 +32,12 @@ typedef enum HNSCGISinkResultEnum
     HNSS_RESULT_RCV_CONT,
     HNSS_RESULT_RCV_ERR,
     HNSS_RESULT_REQUEST_READY,
-    HNSS_RESULT_CLIENT_DONE
+    HNSS_RESULT_CLIENT_DONE,
+    HNSS_RESULT_MSG_CONTENT,
+    HNSS_RESULT_MSG_COMPLETE
 }HNSS_RESULT_T;
 
-typedef enum HNSCGISinkClientStreamState
+typedef enum HNSCGIRRStreamState
 {
     HNSCGI_SS_IDLE,              // In between requests.
     HNSCGI_SS_HDR_NSTR_LEN,      // Extract the length part of the header netstring
@@ -45,12 +48,109 @@ typedef enum HNSCGISinkClientStreamState
     HNSCGI_SS_ERROR              // An error occurred during processing.
 }HNSC_SS_T;
 
-class HNSCGISinkClient : public HNPRRContentSource, public HNPRRContentSink
+class HNPRRContentSource
+{
+    public:
+        virtual std::istream* getSourceStreamRef() = 0;
+};
+
+class HNPRRContentSink
+{
+    public:
+        virtual std::ostream* getSinkStreamRef() = 0;
+};
+
+class HNSCGIMsg : public HNPRRContentSource, public HNPRRContentSink
+{
+    private:
+        std::string m_uri;
+        std::string m_method;
+    //    std::string m_contentType;
+        uint m_statusCode;
+        std::string m_reason;
+
+
+    //    uint m_contentLength;
+        
+        bool m_headerComplete;
+        bool m_dispatched;
+        
+        std::map< std::string, std::string > m_cgiVarMap;
+
+        // 
+        std::map< std::string, std::string > m_paramMap;
+        
+        HNPRRContentSource  *m_cSource;
+        HNPRRContentSink    *m_cSink;
+
+        std::stringstream    m_localContent;
+        uint                 m_contentMoved;
+
+    public:
+        HNSCGIMsg();
+       ~HNSCGIMsg();
+        
+        void clearHeaders();
+
+        void setHeaderDone( bool value );
+        bool isHeaderDone();
+        
+        void setDispatched( bool value );
+        bool isDispatched();     
+       
+        void setURI( std::string uri );
+        void setMethod( std::string method );
+
+        void setStatusCode( uint statusCode );
+        void setReason( std::string reason );
+
+        void setContentLength( uint length );
+
+        void setContentType( std::string typeStr );
+
+        void configAsNotImplemented();
+        void configAsNotFound();
+        void configAsInternalServerError();
+
+        uint getStatusCode();
+        std::string getReason();
+
+        uint getContentLength();
+
+        void addSCGIRequestHeader( std::string name, std::string value );
+
+        void addHdrPair( std::string name, std::string value );
+
+        HNSS_RESULT_T sendSCGIResponseHeaders();
+
+        bool hasHeader( std::string name );
+
+        const std::string& getURI() const;
+        const std::string& getMethod() const;
+    
+        void setContentSource( HNPRRContentSource *source );
+        void setContentSink( HNPRRContentSink *sink );
+
+        std::ostream& useLocalContentSource();
+        void finalizeLocalContent();
+
+        HNSS_RESULT_T xferContentChunk( uint maxChunkLength );
+
+        std::istream* getSourceStreamRef();
+        std::ostream* getSinkStreamRef();
+
+        void debugPrint();
+};
+
+class HNSCGIRR : public HNPRRContentSource, public HNPRRContentSink
 {
         uint               m_fd;
         HNSCGISink        *m_parent;
 
-        HNProxyHTTPReqRsp  m_curRR;
+        HNSCGIMsg m_request;
+        HNSCGIMsg m_response;
+
+        //HNProxyHTTPReqRsp  m_curRR;
                
         HNSC_SS_T  m_rxState;
         
@@ -76,14 +176,18 @@ class HNSCGISinkClient : public HNPRRContentSource, public HNPRRContentSink
         HNSS_RESULT_T consumeNetStrComma();
 
     public:
-        HNSCGISinkClient( uint fd, HNSCGISink *parent );
-       ~HNSCGISinkClient();
-       
+        HNSCGIRR( uint fd, HNSCGISink *parent );
+       ~HNSCGIRR();
+
+        uint getSCGIFD();
+
         HNSS_RESULT_T recvData();
 
         void finish();
 
-        HNProxyHTTPReqRsp *getReqRsp();
+        //HNProxyHTTPReqRsp *getReqRsp();
+        HNSCGIMsg& getReqMsg();
+        HNSCGIMsg& getRspMsg();
 
         virtual std::istream* getSourceStreamRef();
         virtual std::ostream* getSinkStreamRef();
@@ -99,7 +203,7 @@ class HNSCGISink
         // A map of reqrsp objects
         
         // A map of client connections
-        std::map< int, HNSCGISinkClient* > m_clientMap;
+        std::map< int, HNSCGIRR* > m_rrMap;
         
         // The thread helper
         void *m_thelp;
@@ -142,7 +246,7 @@ class HNSCGISink
 
         void debugPrint();
 
-        void queueProxyRequest( HNProxyHTTPReqRsp *reqPtr );
+        void queueProxyRequest( HNSCGIRR *reqPtr );
         
         void markForSend( uint fd );
 

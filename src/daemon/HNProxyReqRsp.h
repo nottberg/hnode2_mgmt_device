@@ -1,11 +1,14 @@
 #ifndef __HN_PROXY_REQRSP_H__
 #define __HN_PROXY_REQRSP_H__
 
+#if 0
 #include "Poco/Net/HTTPRequest.h"
 
 #include <string>
 #include <map>
 #include <sstream>
+
+#include "HNSCGISink.h"
 
 namespace pn = Poco::Net;
 
@@ -16,6 +19,7 @@ typedef enum HNPRRResultEnumeration {
     HNPRR_RESULT_FAILURE
 } HNPRR_RESULT_T;
 
+#if 0
 class HNPRRContentSource
 {
     public:
@@ -27,6 +31,7 @@ class HNPRRContentSink
     public:
         virtual std::ostream* getSinkStreamRef() = 0;
 };
+#endif
 
 class HNProxyHTTPMsg : public HNPRRContentSource, public HNPRRContentSink
 {
@@ -128,5 +133,6 @@ class HNProxyHTTPReqRsp
         HNProxyHTTPMsg &getResponse();
 
 };
+#endif
 
 #endif //__HN_PROXY_REQRSP_H__
