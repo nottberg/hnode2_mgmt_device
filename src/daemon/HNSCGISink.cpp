@@ -6,6 +6,8 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <grp.h>
 
 #include <syslog.h>
 
@@ -706,15 +708,16 @@ HNSS_RESULT_T
 HNSCGISink::openSCGISocket()
 {
     struct sockaddr_un addr;
-    char str[512];
+    char   str[512];
+    struct group *grp;
 
     // Clear address structure - UNIX domain addressing
     // addr.sun_path[0] cleared to 0 by memset() 
     memset( &addr, 0, sizeof(struct sockaddr_un) );  
     addr.sun_family = AF_UNIX;                     
 
-    // Socket with name /tmp/hnode2-scgi-<instanceName>.sock
-    sprintf( str, "/tmp/hnode2-scgi-%s.sock", m_instanceName.c_str() );
+    // Socket with name /var/run/hnode2-scgi-<instanceName>.sock
+    sprintf( str, "/var/run/hnode2-scgi-%s.sock", m_instanceName.c_str() );
     strncpy( &addr.sun_path[0], str, strlen(str) );
 
     // Since the socket is bound to a fs path, try a unlink first to clean up any leftovers.
@@ -724,21 +727,42 @@ HNSCGISink::openSCGISocket()
     m_acceptFD = socket( AF_UNIX, SOCK_STREAM, 0 );
     if( m_acceptFD == -1 )
     {
-        syslog( LOG_ERR, "Opening daemon listening socket failed (%s).", strerror(errno) );
+        printf( "Opening daemon listening socket failed (%s).", strerror(errno) );
         return HNSS_RESULT_FAILURE;
     }
 
     // Bind it to the path in the filesystem
     if( bind( m_acceptFD, (struct sockaddr *) &addr, sizeof( sa_family_t ) + strlen( str ) + 1 ) == -1 )
     {
-        syslog( LOG_ERR, "Failed to bind socket to @%s (%s).", str, strerror(errno) );
+        printf( "Failed to bind socket to @%s (%s).", str, strerror(errno) );
+        return HNSS_RESULT_FAILURE;
+    }
+
+    // Change the ownership and permissions to allow the front end server
+    // to connect to the unix-domain socket.
+    grp = getgrnam("www-data");
+    if( grp == NULL ) 
+    {
+        std::cout << "ERROR: Failed to get gid for 'www-data'" << std::endl;
+        return HNSS_RESULT_FAILURE;
+    }
+
+    if( chown( str, ((uid_t)-1), grp->gr_gid ) < 0 ) 
+    {
+        std::cout << "ERROR: Could not set group of unix domain socket: " << str << std::endl;
+        return HNSS_RESULT_FAILURE;
+    }
+
+    if( chmod( str, (S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP) ) < 0 ) 
+    {
+        std::cout << "ERROR: Could not set permissions for unix domain socket: " << str << std::endl;
         return HNSS_RESULT_FAILURE;
     }
 
     // Accept connections.
     if( listen( m_acceptFD, 4 ) == -1 )
     {
-        syslog( LOG_ERR, "Failed to listen on socket for @%s (%s).", str, strerror(errno) );
+        printf( "Failed to listen on socket for @%s (%s).", str, strerror(errno) );
         return HNSS_RESULT_FAILURE;
     }
 

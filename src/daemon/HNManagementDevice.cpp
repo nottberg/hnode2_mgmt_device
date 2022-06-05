@@ -75,9 +75,6 @@ HNManagementDevice::displayHelp()
     helpFormatter.format(std::cout);
 }
 
-#define HN_MGMTDAEMON_DEVICE_NAME   "hnode2-management-device"
-#define HN_MGMTDAEMON_DEF_INSTANCE  "default"
-
 int 
 HNManagementDevice::main( const std::vector<std::string>& args )
 {
@@ -91,9 +88,9 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
     // Move me to before option processing.
     if( _instancePresent )
-        instanceName = _instance;
+        m_instanceName = _instance;
     else
-        instanceName = HN_MGMTDAEMON_DEF_INSTANCE;
+        m_instanceName = HNODE_MGMT_DEF_INSTANCE;
 
     // Check if we are running as a daemon
     if( config().getBool("application.runAsDaemon", false ) )
@@ -113,17 +110,17 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     //log.info( "Starting hnode2 switch daemon init" );
 
     // Setup HNode Device
-    HNodeDevice hnDevice( HN_MGMTDAEMON_DEVICE_NAME, instanceName );
-
-    hnDevice.setName("mg1");
-    hnDevice.setPort(8400);
+    m_hnodeDev.setDeviceType( HNODE_MGMT_DEVTYPE );
+    m_hnodeDev.setInstance( m_instanceName );
+    m_hnodeDev.setName("mg1");
+    m_hnodeDev.setPort(8400);
 
     HNDEndpoint hndEP;
 
     hndEP.setDispatch( "hnode2Mgmt", this );
     hndEP.setOpenAPIJson( g_HNode2MgmtRest ); 
 
-    hnDevice.addEndpoint( hndEP );
+    m_hnodeDev.addEndpoint( hndEP );
  
     // Setup the decoder for proxy requests that will be handled locally.
     registerProxyEndpointsFromOpenAPI( g_HNode2ProxyMgmtAPI );
@@ -150,13 +147,13 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     events = (struct epoll_event *) calloc( MAXEVENTS, sizeof event );
 
     // Start the HNode Device
-    hnDevice.start();
+    m_hnodeDev.start();
 
     // Start the Managed Device Arbiter
     arbiter.start();
 
     // Start processing requests from the browser via SCGI
-    reqsink.start( instanceName );
+    reqsink.start( m_instanceName );
 
     // Start the AvahiBrowser component
     avBrowser.start();
@@ -321,9 +318,11 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     avBrowser.shutdown();
     reqsink.shutdown();
     arbiter.shutdown();
-    //hnDevice.shutdown();
+    //m_hnodeDev.shutdown();
 
     waitForTerminationRequest();
+
+    std::cout << "Server teminated" << std::endl;
 
     return Application::EXIT_OK;
 }
@@ -370,6 +369,79 @@ HNManagementDevice::removeSocketFromEPoll( int sfd )
     {
         return HNMD_RESULT_FAILURE;
     }
+
+    return HNMD_RESULT_SUCCESS;
+}
+
+bool 
+HNManagementDevice::configExists()
+{
+    HNodeConfigFile cfgFile;
+
+    return cfgFile.configExists( HNODE_MGMT_DEVTYPE, m_instanceName );
+}
+
+HNMD_RESULT_T
+HNManagementDevice::initConfig()
+{
+    HNodeConfigFile cfgFile;
+    HNodeConfig     cfg;
+
+    m_hnodeDev.initConfigSections( cfg );
+
+    cfg.debugPrint(2);
+
+    std::cout << "Saving config..." << std::endl;
+    if( cfgFile.saveConfig( HNODE_MGMT_DEVTYPE, m_instanceName, cfg ) != HNC_RESULT_SUCCESS )
+    {
+        std::cout << "ERROR: Could not save initial configuration." << std::endl;
+        return HNMD_RESULT_FAILURE;
+    }
+
+    return HNMD_RESULT_SUCCESS;
+}
+
+HNMD_RESULT_T
+HNManagementDevice::readConfig()
+{
+    HNodeConfigFile cfgFile;
+    HNodeConfig     cfg;
+
+    if( configExists() == false )
+        return HNMD_RESULT_FAILURE;
+
+    std::cout << "Loading config..." << std::endl;
+
+    if( cfgFile.loadConfig( HNODE_MGMT_DEVTYPE, m_instanceName, cfg ) != HNC_RESULT_SUCCESS )
+    {
+        std::cout << "ERROR: Could not load saved configuration." << std::endl;
+        return HNMD_RESULT_FAILURE;
+    }
+
+    std::cout << "cl1" << std::endl;
+
+    m_hnodeDev.readConfigSections( cfg );
+
+    std::cout << "Config loaded" << std::endl;
+
+    return HNMD_RESULT_SUCCESS;
+}
+
+HNMD_RESULT_T
+HNManagementDevice::updateConfig()
+{
+    HNodeConfigFile cfgFile;
+    HNodeConfig     cfg;
+
+    cfg.debugPrint(2);
+
+    std::cout << "Saving config..." << std::endl;
+    if( cfgFile.saveConfig( HNODE_MGMT_DEVTYPE, m_instanceName, cfg ) != HNC_RESULT_SUCCESS )\
+    {
+        std::cout << "ERROR: Could not save configuration." << std::endl;
+        return HNMD_RESULT_FAILURE;
+    }
+    std::cout << "Config saved" << std::endl;
 
     return HNMD_RESULT_SUCCESS;
 }

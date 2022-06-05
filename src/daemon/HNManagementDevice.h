@@ -19,6 +19,9 @@
 
 #define MAXEVENTS  8
 
+#define HNODE_MGMT_DEF_INSTANCE  "default"
+#define HNODE_MGMT_DEVTYPE   "hnode2-management-device"
+
 typedef enum HNManagementDeviceResultEnum
 {
   HNMD_RESULT_SUCCESS,
@@ -34,12 +37,14 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
 
         std::string _instance; 
 
-        std::string instanceName;
+        std::string m_instanceName;
 
         int epollFD;
     
         struct epoll_event event;
         struct epoll_event *events;
+
+        HNodeDevice m_hnodeDev;
 
         HNManagedDeviceArbiter arbiter;
         HNSCGISink             reqsink;
@@ -63,6 +68,11 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
         HNProxyTicket* checkForProxyRequest( HNProxyHTTPReqRsp *reqRR );
         HNOperationData* mapProxyRequest( HNProxyHTTPReqRsp *reqRR );
         void handleLocalSCGIRequest( HNProxyHTTPReqRsp *reqRR, HNOperationData *opData );
+
+        bool configExists();
+        HNMD_RESULT_T initConfig();
+        HNMD_RESULT_T readConfig();
+        HNMD_RESULT_T updateConfig();
 
     protected:
         
