@@ -92,12 +92,22 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     else
         m_instanceName = HNODE_MGMT_DEF_INSTANCE;
 
-    // Check if we are running as a daemon
-    if( config().getBool("application.runAsDaemon", false ) )
+    // Check if the config file already exists, or should be initialized
+    std::cout << "Looking for config file" << std::endl;
+    if( configExists() == false )
     {
+        initConfig();
+    }
+
+    // Pull in the device configuration file info
+    readConfig();
+
+    // Check if we are running as a daemon
+    //if( config().getBool("application.runAsDaemon", false ) )
+    //{
         // Configure where logging should end up
         //log.setDaemon( true );
-    }
+    //}
 
     // Enable debug logging if requested
     if( _debugLogging == true )
