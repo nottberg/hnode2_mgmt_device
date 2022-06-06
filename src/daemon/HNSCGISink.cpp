@@ -870,16 +870,7 @@ void
 HNSCGISink::debugPrint()
 {
     printf( "=== SCGI Sink ===\n" );
-
-#if 0
-    for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
-    {
-        it->second.debugPrint( 2 );
-    }
-#endif
 }
-
-
 
 void
 HNSCGISink::start( std::string instance )

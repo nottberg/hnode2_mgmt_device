@@ -384,18 +384,6 @@ HNMDARecord::debugPrint( uint offset )
     {
         it->debugPrint(offset);
     }
-
-#if 0
-        std::string discID;
-        HNodeID     hnodeID;
-        std::string devType;
-        std::string devVersion;
-        std::string name;
-
-        std::string baseIPv4URL;
-        std::string baseIPv6URL;
-        std::string baseSelfURL;
-#endif
 }
 
 HNManagedDeviceArbiter::HNManagedDeviceArbiter()

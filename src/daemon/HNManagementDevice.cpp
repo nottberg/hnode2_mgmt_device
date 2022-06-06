@@ -480,67 +480,9 @@ HNManagementDevice::dispatchEP( HNodeDevice *parent, HNOperationData *opData )
         return;
     }
 
-    //std::cout << "Start Action - client: " << action.getType() << "  thread: " << std::this_thread::get_id() << std::endl;
+    //  FIXME - add real response code, Request was successful
+    opData->responseSetStatusAndReason( HNR_HTTP_OK );
 
-    // Submit the action and block for response
-    //m_actionQueue.postAndWait( &action );
-
-    //std::cout << "Finish Action - client" << "  thread: " << std::this_thread::get_id() << std::endl;
-
-#if 0
-    // Determine what happened
-    switch( action.getStatus() )
-    {
-        case HNRW_RESULT_SUCCESS:
-        {
-            std::string cType;
-            std::string objID;
-
-
-            // See if response content should be generated
-            if( action.hasRspContent( cType ) )
-            {
-                // Set response content type
-                opData->responseSetChunkedTransferEncoding( true );
-                opData->responseSetContentType( cType );
-
-                // Render any response content
-                std::ostream& ostr = opData->responseSend();
-            
-                if( action.generateRspContent( ostr ) == true )
-                {
-                    opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
-                    opData->responseSend();
-                    return;
-                }
-            }
-
-            // Check if a new object was created.
-            if( action.hasNewObject( objID ) )
-            {
-                // Object was created return info
-                opData->responseSetCreated( objID );
-                opData->responseSetStatusAndReason( HNR_HTTP_CREATED );
-            }
-            else
-            {
-#endif
-                // Request was successful
-                opData->responseSetStatusAndReason( HNR_HTTP_OK );
-#if 0
-            }
-        }
-        break;
-
-        case HNRW_RESULT_FAILURE:
-            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
-        break;
-
-        case HNRW_RESULT_TIMEOUT:
-            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
-        break;
-    }
-#endif
     // Return to caller
     opData->responseSend();
 }

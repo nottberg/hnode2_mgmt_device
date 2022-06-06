@@ -485,46 +485,6 @@ HNProxySequencer::executeProxyRequest( HNProxyTicket *reqTicket )
 
     m_responseQueue->postRecord( reqTicket );
 
-#if 0
-    Poco::URI uri;
-    uri.setScheme( "http" );
-    uri.setHost( reqTicket->getAddress() );
-    uri.setPort( reqTicket->getPort() );
-    uri.setPath( reqTicket->getPath() ); // i.e. "/hnode2/irrigation/status"
-
-    // Allocate
-    pn::HTTPClientSession session( uri.getHost(), uri.getPort() );
-
-    // Set session based on request parameters
-    // Copy over any proxy headers
-    HNProxyHTTPMsg &reqMsg = reqTicket->getRR()->getRequest();
-    pn::HTTPRequest request( reqMsg.getMethod(), uri.getPathAndQuery(), pn::HTTPMessage::HTTP_1_1 );
-
-
-    // Send the request
-    std::ostream& os = session.sendRequest( request );
-
-    // If there is outbound data, then send that now
-    if( reqMsg.getContentLength() )
-    {
-        //uint bytesSent
-    }
-
-    // Wait for a response
-    pn::HTTPResponse response;
-    std::istream& rs = session.receiveResponse( response );
-    std::cout << response.getStatus() << " " << response.getReason() << " " << response.getContentLength() << std::endl;
-
-    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
-    {
-        return HNPS_RESULT_FAILURE;
-    }
-
-    std::string body;
-    Poco::StreamCopier::copyToString( rs, body );
-    std::cout << "Response:" << std::endl << body << std::endl;
-#endif
-
     return HNPS_RESULT_SUCCESS;
 }
 
