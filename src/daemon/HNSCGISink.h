@@ -48,36 +48,38 @@ typedef enum HNSCGIRRStreamState
     HNSCGI_SS_ERROR              // An error occurred during processing.
 }HNSC_SS_T;
 
+
 class HNPRRContentSource
 {
     public:
+        // Return the stream object for inbound content
         virtual std::istream* getSourceStreamRef() = 0;
 };
 
 class HNPRRContentSink
 {
     public:
+        // Return the the stream object for outbound content
         virtual std::ostream* getSinkStreamRef() = 0;
 };
+
+// Signature for optional shutdown function to get free resources 
+// after completion of the request-response operations.
+typedef void (*SHUTDOWN_CALL_FNPTR_T)( void *objAddr );
 
 class HNSCGIMsg : public HNPRRContentSource, public HNPRRContentSink
 {
     private:
         std::string m_uri;
         std::string m_method;
-    //    std::string m_contentType;
         uint m_statusCode;
         std::string m_reason;
-
-
-    //    uint m_contentLength;
         
         bool m_headerComplete;
         bool m_dispatched;
         
         std::map< std::string, std::string > m_cgiVarMap;
 
-        // 
         std::map< std::string, std::string > m_paramMap;
         
         HNPRRContentSource  *m_cSource;
@@ -149,9 +151,7 @@ class HNSCGIRR : public HNPRRContentSource, public HNPRRContentSink
 
         HNSCGIMsg m_request;
         HNSCGIMsg m_response;
-
-        //HNProxyHTTPReqRsp  m_curRR;
-               
+            
         HNSC_SS_T  m_rxState;
         
         std::string m_partialStr;
@@ -166,6 +166,8 @@ class HNSCGIRR : public HNPRRContentSource, public HNPRRContentSink
 
         __gnu_cxx::stdio_filebuf<char> m_ofilebuf;
         std::iostream m_ostream;
+
+        std::vector< std::pair< SHUTDOWN_CALL_FNPTR_T, void* > > m_shutdownCallList;
 
         void setRxParseState( HNSC_SS_T newState );
         HNSS_RESULT_T readRequestHeaders();
@@ -185,7 +187,10 @@ class HNSCGIRR : public HNPRRContentSource, public HNPRRContentSink
 
         void finish();
 
-        //HNProxyHTTPReqRsp *getReqRsp();
+        // Add a function and parameter that should get called when the 
+        // Request and Response is finished and things are being cleaned up.
+        void addShutdownCall( SHUTDOWN_CALL_FNPTR_T funcPtr, void *objAddr );
+
         HNSCGIMsg& getReqMsg();
         HNSCGIMsg& getRspMsg();
 

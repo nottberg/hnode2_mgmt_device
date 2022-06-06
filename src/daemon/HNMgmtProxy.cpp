@@ -26,6 +26,133 @@ namespace pn  = Poco::Net;
 
 #define MAXEVENTS  8
 
+// Define this helper class here so that the Poco exposure in the 
+// public header file is lessened.  This class will be accessed through the 
+// abstract interfaces and passed around as a typeless pointer.
+class HNProxyPocoHelper : public HNPRRContentSource, public HNPRRContentSink 
+{
+    public:
+        HNProxyPocoHelper();
+       ~HNProxyPocoHelper();
+
+        void init( HNProxyTicket *reqTicket );
+
+        HNSS_RESULT_T initiateRequest( HNProxyTicket *reqTicket );
+        HNSS_RESULT_T waitForResponse( HNProxyTicket *reqTicket );
+
+        virtual std::istream* getSourceStreamRef();
+        virtual std::ostream* getSinkStreamRef();
+
+    private:
+        Poco::URI              m_uri;
+
+        pn::HTTPClientSession  m_session;
+        pn::HTTPRequest        m_request;
+        pn::HTTPResponse       m_response;
+
+        std::istream          *m_rspStream;
+        std::ostream          *m_reqStream;
+};
+
+// Provide a delete function that will get rid of the allocated HNProxyPocoHelper
+// when the request-response operations are all completed and the resources
+// in the HNProxyPocoHelper object won't be needed anymore.
+static void HNProxyPocoHelperDeleteFunction( void *objAddr )
+{
+    HNProxyPocoHelper *helper = (HNProxyPocoHelper*) objAddr;
+    std::cout << "Deleting HNProxyPocoHelper: " << helper << std::endl;
+    delete helper;
+}
+
+HNProxyPocoHelper::HNProxyPocoHelper()
+: m_request( pn::HTTPMessage::HTTP_1_1 )
+{
+    m_rspStream = NULL;
+    m_reqStream = NULL;
+}
+
+HNProxyPocoHelper::~HNProxyPocoHelper()
+{
+
+}
+
+std::istream* 
+HNProxyPocoHelper::getSourceStreamRef()
+{
+    return m_rspStream;
+}
+
+std::ostream* 
+HNProxyPocoHelper::getSinkStreamRef()
+{
+    std::cout << "HNProxyPocoHelper::getSinkStreamRef - m_reqStream" << std::endl;
+    return m_reqStream;
+}
+
+void
+HNProxyPocoHelper::init( HNProxyTicket *reqTicket )
+{
+    // Create the URL to proxy too.
+    m_uri.setScheme( "http" );
+    m_uri.setHost( reqTicket->getAddress() );
+    m_uri.setPort( reqTicket->getPort() );
+    m_uri.setRawQuery( reqTicket->getQueryStr() );
+    m_uri.setPath( reqTicket->getProxyPath() ); 
+
+    std::cout << "Proxy Request URL: " << m_uri.getPathAndQuery() << std::endl;
+
+    // Setup session object
+    m_session.setHost( m_uri.getHost() );
+    m_session.setPort( m_uri.getPort() );
+
+    // Set up request object from info in ticket and originating request.
+    HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
+
+    std::cout << "Proxy Request Method: " << reqMsg.getMethod() << std::endl;
+
+    m_request.setMethod( reqMsg.getMethod() );
+    m_request.setURI( m_uri.getPathAndQuery() );
+}
+
+HNSS_RESULT_T
+HNProxyPocoHelper::initiateRequest( HNProxyTicket *reqTicket )
+{
+    HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
+
+    // Send the request
+    m_reqStream = &m_session.sendRequest( m_request );
+
+    // Associate the transfer stream
+    reqMsg.setContentSink( this );
+
+    return (reqMsg.getContentLength() > 0) ? HNSS_RESULT_MSG_CONTENT : HNSS_RESULT_MSG_COMPLETE;
+}
+
+HNSS_RESULT_T
+HNProxyPocoHelper::waitForResponse( HNProxyTicket *reqTicket )
+{
+    HNSCGIMsg &rspMsg = reqTicket->getRR()->getRspMsg();
+
+    // Wait for a response
+    m_rspStream = &m_session.receiveResponse( m_response );
+    std::cout << m_response.getStatus() << " " << m_response.getReason() << " " << m_response.getContentLength() << std::endl;
+
+    rspMsg.setStatusCode( m_response.getStatus() );
+    rspMsg.setReason( m_response.getReason() );
+
+    if( m_response.getContentLength() != (-1) )
+        rspMsg.setContentLength( m_response.getContentLength() );
+
+    for( pn::NameValueCollection::ConstIterator it = m_response.begin(); it != m_response.end(); it++ )
+    {
+        rspMsg.addHdrPair( it->first, it->second );
+    }
+
+    // Associate the transfer stream
+    rspMsg.setContentSource( this );
+
+    return (rspMsg.getContentLength() > 0) ? HNSS_RESULT_MSG_CONTENT : HNSS_RESULT_MSG_COMPLETE;
+}
 
 HNProxyTicket::HNProxyTicket( HNSCGIRR *parentRR )
 {
@@ -322,127 +449,16 @@ HNProxySequencer::removeSocketFromEPoll( int sfd )
     return HNPS_RESULT_SUCCESS;
 }
 
-class HNProxyPocoHelper : public HNPRRContentSource, public HNPRRContentSink 
-{
-    public:
-        HNProxyPocoHelper();
-       ~HNProxyPocoHelper();
-
-        void init( HNProxyTicket *reqTicket );
-
-        HNSS_RESULT_T initiateRequest( HNProxyTicket *reqTicket );
-        HNSS_RESULT_T waitForResponse( HNProxyTicket *reqTicket );
-
-        virtual std::istream* getSourceStreamRef();
-        virtual std::ostream* getSinkStreamRef();
-
-    private:
-        Poco::URI              m_uri;
-
-        pn::HTTPClientSession  m_session;
-        pn::HTTPRequest        m_request;
-        pn::HTTPResponse       m_response;
-
-        std::istream          *m_rspStream;
-        std::ostream          *m_reqStream;
-};
-
-HNProxyPocoHelper::HNProxyPocoHelper()
-: m_request( pn::HTTPMessage::HTTP_1_1 )
-{
-    m_rspStream = NULL;
-    m_reqStream = NULL;
-}
-
-HNProxyPocoHelper::~HNProxyPocoHelper()
-{
-
-}
-
-std::istream* 
-HNProxyPocoHelper::getSourceStreamRef()
-{
-    return m_rspStream;
-}
-
-std::ostream* 
-HNProxyPocoHelper::getSinkStreamRef()
-{
-    std::cout << "HNProxyPocoHelper::getSinkStreamRef - m_reqStream" << std::endl;
-    return m_reqStream;
-}
-
-void
-HNProxyPocoHelper::init( HNProxyTicket *reqTicket )
-{
-    // Create the URL to proxy too.
-    m_uri.setScheme( "http" );
-    m_uri.setHost( reqTicket->getAddress() );
-    m_uri.setPort( reqTicket->getPort() );
-    m_uri.setRawQuery( reqTicket->getQueryStr() );
-    m_uri.setPath( reqTicket->getProxyPath() ); 
-
-    std::cout << "Proxy Request URL: " << m_uri.getPathAndQuery() << std::endl;
-
-    // Setup session object
-    m_session.setHost( m_uri.getHost() );
-    m_session.setPort( m_uri.getPort() );
-
-    // Set up request object from info in ticket and originating request.
-    HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
-
-    std::cout << "Proxy Request Method: " << reqMsg.getMethod() << std::endl;
-
-    m_request.setMethod( reqMsg.getMethod() );
-    m_request.setURI( m_uri.getPathAndQuery() );
-}
-
-HNSS_RESULT_T
-HNProxyPocoHelper::initiateRequest( HNProxyTicket *reqTicket )
-{
-    HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
-
-    // Send the request
-    m_reqStream = &m_session.sendRequest( m_request );
-
-    // Associate the transfer stream
-    reqMsg.setContentSink( this );
-
-    return (reqMsg.getContentLength() > 0) ? HNSS_RESULT_MSG_CONTENT : HNSS_RESULT_MSG_COMPLETE;
-}
-
-HNSS_RESULT_T
-HNProxyPocoHelper::waitForResponse( HNProxyTicket *reqTicket )
-{
-    HNSCGIMsg &rspMsg = reqTicket->getRR()->getRspMsg();
-
-    // Wait for a response
-    m_rspStream = &m_session.receiveResponse( m_response );
-    std::cout << m_response.getStatus() << " " << m_response.getReason() << " " << m_response.getContentLength() << std::endl;
-
-    rspMsg.setStatusCode( m_response.getStatus() );
-    rspMsg.setReason( m_response.getReason() );
-
-    if( m_response.getContentLength() != (-1) )
-        rspMsg.setContentLength( m_response.getContentLength() );
-
-    for( pn::NameValueCollection::ConstIterator it = m_response.begin(); it != m_response.end(); it++ )
-    {
-        rspMsg.addHdrPair( it->first, it->second );
-    }
-
-    // Associate the transfer stream
-    rspMsg.setContentSource( this );
-
-    return (rspMsg.getContentLength() > 0) ? HNSS_RESULT_MSG_CONTENT : HNSS_RESULT_MSG_COMPLETE;
-}
-
 HNPS_RESULT_T
 HNProxySequencer::executeProxyRequest( HNProxyTicket *reqTicket )
 {
     HNSS_RESULT_T  result;
     HNSCGIMsg &reqMsg = reqTicket->getRR()->getReqMsg();
+
+
     HNProxyPocoHelper *ph = new HNProxyPocoHelper();
+    std::cout << "Allocated new HNProxyPocoHelper: " << ph << std::endl;
+    reqTicket->getRR()->addShutdownCall( HNProxyPocoHelperDeleteFunction, ph );
 
     ph->init( reqTicket );
 

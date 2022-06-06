@@ -296,13 +296,10 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                         proxyRR->getRspMsg().configAsNotFound();
                         reqsink.getProxyResponseQueue()->postRecord( proxyRR );
                     }
-                    else
-                    {
-                        std::cout << "Local management device request: " << opData->getOpID() << std::endl;
-                        handleLocalSCGIRequest( proxyRR, opData );
-                        reqsink.getProxyResponseQueue()->postRecord( proxyRR );
-                    }
 
+                    std::cout << "Local management device request: " << opData->getOpID() << std::endl;
+                    handleLocalSCGIRequest( proxyRR, opData );
+                    reqsink.getProxyResponseQueue()->postRecord( proxyRR );
                     delete opData;
                 }
             }
@@ -315,6 +312,8 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                     std::cout << "HNManagementDevice::Received proxy response" << std::endl;
 
                     HNSCGIRR *proxyRR = proxyTicket->getRR();
+
+                    std::cout << "Deleting HNProxyTicket: " << proxyTicket << std::endl;
 
                     delete proxyTicket;
 
@@ -686,6 +685,7 @@ HNManagementDevice::checkForProxyRequest( HNSCGIRR *reqRR )
 
     // Allocate and fillout a ProxyTicket for return.
     HNProxyTicket *rtnTicket = new HNProxyTicket( reqRR );
+    std::cout << "Allocated new HNProxyTicket: " << rtnTicket << std::endl;
 
     rtnTicket->setCRC32ID( crc32ID );
     rtnTicket->setAddress( dcInfo.getAddress() );

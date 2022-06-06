@@ -412,13 +412,6 @@ HNSCGIMsg::debugPrint()
     }
 }
 
-
-
-
-
-
-
-
 HNSCGIRR::HNSCGIRR( uint fd, HNSCGISink *parent )
 : m_ofilebuf( fd, (std::ios::out|std::ios::binary) ), m_ifilebuf( fd, (std::ios::in|std::ios::binary) ), m_ostream( &m_ofilebuf ), m_istream( &m_ifilebuf )
 {
@@ -433,7 +426,11 @@ HNSCGIRR::HNSCGIRR( uint fd, HNSCGISink *parent )
 
 HNSCGIRR::~HNSCGIRR()
 {
-
+    for( std::vector< std::pair< SHUTDOWN_CALL_FNPTR_T, void* > >::iterator it = m_shutdownCallList.begin(); it != m_shutdownCallList.end(); it++)
+    {
+        if( it->first != NULL )
+            it->first( it->second );
+    }
 }       
 
 uint 
@@ -793,38 +790,6 @@ HNSCGIRR::recvData()
     return HNSS_RESULT_SUCCESS;
 }
 
-#if 0
-HNSS_RESULT_T 
-HNSCGIRR::sendData( std::ostream &outStream )
-{
-    HNSS_RESULT_T result;
-    //char rtnBuf[1024];
-
-    //sprintf( rtnBuf, "Status: 200 OK\r\nContent-Type: text/plain\r\n\r\n42" );
-
-    ssize_t bytesWritten = send( m_fd, rtnBuf, strlen(rtnBuf), 0 );
- 
-    printf( "HNSCGIRR::sendData - fd: %u  bytesWritten: %lu\n", m_fd, bytesWritten );
-    
-    return HNSS_RESULT_SUCCESS;
-}
-#endif
-
-void
-HNSCGIRR::finish()
-{
-    printf( "Finishing client %d\n", m_fd );
-    close( m_fd );
-}
-
-#if 0
-HNProxyHTTPReqRsp*
-HNSCGIRR::getReqRsp()
-{
-    return &m_curRR;
-}
-#endif
-
 std::istream*
 HNSCGIRR::getSourceStreamRef()
 {
@@ -838,6 +803,11 @@ HNSCGIRR::getSinkStreamRef()
     return &m_ostream;
 }
 
+void
+HNSCGIRR::addShutdownCall( SHUTDOWN_CALL_FNPTR_T funcPtr, void *objAddr )
+{
+    m_shutdownCallList.push_back( std::pair< SHUTDOWN_CALL_FNPTR_T, void* >( funcPtr, objAddr ) );
+}
 
 // Helper class for running HNSCGISink  
 // proxy loop as an independent thread
@@ -1028,8 +998,7 @@ HNSCGISink::runSCGILoop()
                         status = response->getRspMsg().xferContentChunk( 4096 );
                     }
 
-                    response->finish();
-                    m_rrMap.erase(it);
+                    closeClientConnection( response->getSCGIFD() );
                 }
             }           
             else
@@ -1217,6 +1186,8 @@ HNSCGISink::processNewClientConnections( )
         syslog( LOG_ERR, "Adding client - sfd: %d", infd );
 
         HNSCGIRR *client = new HNSCGIRR( infd, this );
+        std::cout << "Allocated new HNSCGIRR: " << client << std::endl;
+
         m_rrMap.insert( std::pair< int, HNSCGIRR* >( infd, client ) );
 
         addSocketToEPoll( infd );
@@ -1229,14 +1200,22 @@ HNSCGISink::processNewClientConnections( )
 HNSS_RESULT_T
 HNSCGISink::closeClientConnection( int clientFD )
 {
-    m_rrMap.erase( clientFD );
+    std::map< int, HNSCGIRR* >::iterator cit = m_rrMap.find( clientFD );
+    if( cit == m_rrMap.end() )
+        return HNSS_RESULT_FAILURE;
 
     removeSocketFromEPoll( clientFD );
 
     close( clientFD );
 
-    syslog( LOG_ERR, "Closed client - sfd: %d", clientFD );
+    printf( "Closed client - sfd: %d\n", clientFD );
 
+    HNSCGIRR *client = cit->second;
+    m_rrMap.erase( cit );
+
+    std::cout << "Delete HNSCGIRR: " << client << std::endl;
+    delete client;
+    
     return HNSS_RESULT_SUCCESS;
 }
 
