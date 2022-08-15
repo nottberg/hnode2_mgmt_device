@@ -194,34 +194,37 @@ HNMDARecord::~HNMDARecord()
 }
 
 void 
-HNMDARecord::setDiscoveryState( HNMDR_DISC_STATE_T value )
+HNMDARecord::setManagementState( HNMDR_MGMT_STATE_T value )
 {
-    discoveryState = value;
+    m_mgmtState = value;
 }
 
+#if 0
 void 
 HNMDARecord::setOwnershipState( HNMDR_OWNER_STATE_T value )
 {
     ownershipState = value;
 }
+#endif
 
-HNMDR_DISC_STATE_T  
-HNMDARecord::getDiscoveryState()
+HNMDR_MGMT_STATE_T  
+HNMDARecord::getManagementState()
 {
-    return discoveryState;
+    return m_mgmtState;
 }
 
 std::string
-HNMDARecord::getDiscoveryStateStr()
+HNMDARecord::getManagementStateStr()
 {
-    if( HNMDR_DISC_STATE_NEW == discoveryState )
-        return "HNMDR_DISC_STATE_NEW";
-    else if( HNMDR_DISC_STATE_NOTSET == discoveryState )
-        return "HNMDR_DISC_STATE_NOTSET";
+    if( HNMDR_MGMT_STATE_ACTIVE == m_mgmtState )
+        return "ACTIVE";
+    else if( HNMDR_MGMT_STATE_NOTSET == m_mgmtState )
+        return "NOTSET";
 
     return "ERROR";
 }
 
+#if 0
 HNMDR_OWNER_STATE_T 
 HNMDARecord::getOwnershipState()
 {
@@ -238,6 +241,7 @@ HNMDARecord::getOwnershipStateStr()
 
     return "ERROR";
 }
+#endif
 
 void 
 HNMDARecord::setDiscoveryID( std::string value )
@@ -372,7 +376,7 @@ HNMDARecord::updateRecord( HNMDARecord &newRecord )
 void 
 HNMDARecord::debugPrint( uint offset )
 {
-    printf( "%*.*s%s  %s  %s\n", offset, offset, " ", hnodeID.getCRC32AsHexStr().c_str(), getDiscoveryStateStr().c_str(), getOwnershipStateStr().c_str() );
+    printf( "%*.*s%s  %s\n", offset, offset, " ", hnodeID.getCRC32AsHexStr().c_str(), getManagementStateStr().c_str() );
  
     offset += 2;
     printf( "%*.*sname: %s\n", offset, offset, " ", getName().c_str() );
@@ -406,8 +410,7 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
     if( it == mdrMap.end() )
     {
         // This is a new record
-        record.setDiscoveryState( HNMDR_DISC_STATE_NEW );
-        record.setOwnershipState( HNMDR_OWNER_STATE_UNKNOWN );
+        record.setManagementState( HNMDR_MGMT_STATE_DISCOVERED );
 
         mdrMap.insert( std::pair< std::string, HNMDARecord >( record.getCRC32ID(), record ) );
     }
@@ -423,6 +426,14 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
 HNMDL_RESULT_T 
 HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
 {
+    // Check if the record is existing, or if this is a new discovery.
+    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( record.getCRC32ID() );
+
+    if( it != mdrMap.end() )
+    {
+        // This is a new record
+        it->second.setManagementState( HNMDR_MGMT_STATE_DISAPPEARING );
+    }
 
     return HNMDL_RESULT_SUCCESS;
 }

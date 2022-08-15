@@ -80,7 +80,7 @@ class HNMDARAddress
 class HNMDARecord
 {
     private:
-        HNMDR_MGMT_STATE_T   mgmtState;
+        HNMDR_MGMT_STATE_T   m_mgmtState;
         //HNMDR_OWNER_STATE_T  ownershipState;
 
         std::string discID;
@@ -95,8 +95,8 @@ class HNMDARecord
         HNMDARecord();
        ~HNMDARecord();
 
-        void setDiscoveryState( HNMDR_DISC_STATE_T value );
-        void setOwnershipState( HNMDR_OWNER_STATE_T value );
+        void setManagementState( HNMDR_MGMT_STATE_T value );
+        //void setOwnershipState( HNMDR_OWNER_STATE_T value );
 
         void setDiscoveryID( std::string value );
         void setDeviceType( std::string value );
@@ -106,11 +106,11 @@ class HNMDARecord
 
         void addAddressInfo( std::string dnsName, std::string address, uint16_t port );
      
-        HNMDR_DISC_STATE_T  getDiscoveryState();
-        std::string getDiscoveryStateStr();
+        HNMDR_MGMT_STATE_T  getManagementState();
+        std::string getManagementStateStr();
 
-        HNMDR_OWNER_STATE_T getOwnershipState();
-        std::string getOwnershipStateStr();
+        //HNMDR_OWNER_STATE_T getOwnershipState();
+        //std::string getOwnershipStateStr();
 
         std::string getDiscoveryID();
         std::string getDeviceType();
