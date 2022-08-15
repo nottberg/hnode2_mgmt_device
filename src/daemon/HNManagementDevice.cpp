@@ -12,14 +12,17 @@
 #include <iostream>
 #include <sstream>
 
-#include "Poco/Util/ServerApplication.h"
-#include "Poco/Util/Option.h"
-#include "Poco/Util/OptionSet.h"
-#include "Poco/Util/HelpFormatter.h"
-#include "Poco/Checksum.h"
+#include <jwt.h>
+
+#include <Poco/Util/ServerApplication.h>
+#include <Poco/Util/Option.h>
+#include <Poco/Util/OptionSet.h>
+#include <Poco/Util/HelpFormatter.h>
+#include <Poco/Checksum.h>
 #include <Poco/JSON/Object.h>
 #include <Poco/JSON/Parser.h>
-#include "Poco/URI.h"
+#include <Poco/URI.h>
+#include <Poco/StreamCopier.h>
 
 #include <hnode2/HNodeDevice.h>
 
@@ -295,6 +298,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                     {
                         proxyRR->getRspMsg().configAsNotFound();
                         reqsink.getProxyResponseQueue()->postRecord( proxyRR );
+                        continue;
                     }
 
                     std::cout << "Local management device request: " << opData->getOpID() << std::endl;
@@ -665,8 +669,92 @@ HNManagementDevice::mapProxyRequest( HNSCGIRR *reqRR )
             return opData;
     }
 
+    std::cout << "Warning: No handler found." << std::endl;
+
     // Should return default error handler instead?
     return NULL;
+}
+
+HNMD_RESULT_T
+HNManagementDevice::generateJWT( std::string username, uint duration, std::string &token )
+{
+	time_t iat = time(NULL);
+    int ret = 0;
+    jwt_t *jwt = NULL;
+
+    // Create a new jwt structure
+    ret = jwt_new( &jwt );
+    if( (ret != 0) || (jwt == NULL) ) 
+    {
+        fprintf( stderr, "invalid jwt\n" );
+        return HNMD_RESULT_FAILURE;
+    }
+
+    // Add the username to the payload
+    ret = jwt_add_grant( jwt, "username", username.c_str() );
+    if( ret != 0 ) 
+    {
+        fprintf( stderr, "Add grant is invalid\n" );
+        return HNMD_RESULT_FAILURE;
+    }
+    
+    // Add the role to the payload
+    ret = jwt_add_grant( jwt, "role", "ROLE_ADMIN" );
+    if( ret != 0 ) 
+    {
+        fprintf( stderr, "Add grant is invalid\n" );
+        return HNMD_RESULT_FAILURE;
+    }
+
+    // Add the issurer to the payload
+    std::string iss = HNODE_MGMT_DEVTYPE;
+    iss += "-";
+    iss += m_instanceName;    
+    iss += "-";
+    iss += m_hnodeDev.getHNodeIDCRC32Str();
+    ret = jwt_add_grant( jwt, "iss", iss.c_str() );
+    if( ret != 0 ) 
+    {
+        fprintf( stderr, "Add grant is invalid\n" );
+        return HNMD_RESULT_FAILURE;
+    }
+
+    // Add the time when token was issued.
+    ret = jwt_add_grant_int( jwt, "iat", iat );
+    if( ret != 0 ) 
+    {
+        fprintf( stderr, "Add grant is invalid\n" );
+        return HNMD_RESULT_FAILURE;
+    }
+
+    // Add the experation time for the token.
+    ret = jwt_add_grant_int( jwt, "exp", (iat + duration) );
+    if( ret != 0 ) 
+    {
+        fprintf( stderr, "Add grant is invalid\n" );
+        return HNMD_RESULT_FAILURE;
+    }
+
+    // Encode the token and sign via HMAC
+    std::string skey = "TestSecretKeyStringForHMAC";
+    ret = jwt_set_alg( jwt, JWT_ALG_HS256, (const unsigned char *) skey.c_str(), skey.size() );
+    if( ret < 0 ) 
+    {
+        fprintf( stderr, "jwt incorrect algorithm\n" );
+        return HNMD_RESULT_FAILURE;
+    }
+
+    char *out = jwt_dump_str( jwt, 1 );
+    printf( "%s\n\n", out );
+    free( out );
+
+    out = jwt_encode_str( jwt );
+    token = out;
+    free( out );
+    
+    jwt_free( jwt );
+
+    return HNMD_RESULT_SUCCESS;
 }
 
 void 
@@ -678,8 +766,69 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
 
     std::string opID = opData->getOpID();
 
+    // POST /hnode2/mgmt/auth
+    if( "createAuthToken" == opID )
+    {
+        std::cout << "== createAuthToken request ==" << std::endl;
+
+        // Pull the content portion into the local buffer.
+        reqRR->getReqMsg().readContentToLocal();
+       
+        std::string body;
+        Poco::StreamCopier::copyToString( reqRR->getReqMsg().getLocalInputStream(), body );
+        std::cout << body << std::endl;
+
+        std::string jwtStr;
+        HNMD_RESULT_T result = generateJWT( "admin", (12*60*60), jwtStr );
+        switch( result )
+        {
+            case HNMD_RESULT_NOT_AUTHORIZED:
+#if 0           
+            reqRR->getRspMsg().configAsInternalServerError();
+            return;
+#endif              
+            break;
+
+            case HNMD_RESULT_SUCCESS:
+            {
+                reqRR->getRspMsg().setStatusCode(200);
+                reqRR->getRspMsg().setReason("OK");
+                reqRR->getRspMsg().setContentType("application/json");
+
+                std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
+                pjs::Object jsRoot;
+
+                jsRoot.set( "username", "admin" );
+                jsRoot.set( "accessToken", jwtStr );
+
+                pjs::Array jsRoles;
+                jsRoles.add("ROLE_ADMIN");
+                jsRoot.set( "roles", jsRoles );
+
+                // Render into a json string.
+                try {
+                    pjs::Stringifier::stringify( jsRoot, msg );
+                } catch( ... ) {
+                    // Send back not implemented
+                    reqRR->getRspMsg().configAsInternalServerError();
+                    return;
+                }
+
+                reqRR->getRspMsg().finalizeLocalContent();
+                return;
+            }
+            break;
+
+            default:
+            break;
+        }
+
+        // Failure
+        reqRR->getRspMsg().configAsInternalServerError();
+        return;            
+    }    
     // GET "/hnode2/mgmt/status"
-    if( "getStatus" == opID )
+    else if( "getStatus" == opID )
     {
         std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
         pjs::Object jsRoot;
@@ -807,6 +956,28 @@ const std::string g_HNode2ProxyMgmtAPI = R"(
     "title": ""
   },
   "paths": {
+      "/hnode2/mgmt/auth/signin": {
+        "post": {
+          "summary": "Request a new authentication token",
+          "operationId": "createAuthToken",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }            
+        }
+      },
+
       "/hnode2/mgmt/status": {
         "get": {
           "summary": "Get management node device status.",

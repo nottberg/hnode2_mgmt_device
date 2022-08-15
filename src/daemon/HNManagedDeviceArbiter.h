@@ -9,17 +9,27 @@
 // Forward declaration for friend class below
 class HNMDARunner;
 
-typedef enum HNManagedDeviceRecordDiscoveryStateEnum
+typedef enum HNManagedDeviceRecordManagementStateEnum
 {
-    HNMDR_DISC_STATE_NOTSET,
-    HNMDR_DISC_STATE_NEW
-}HNMDR_DISC_STATE_T;
+    HNMDR_MGMT_STATE_NOTSET,       // Default value
+    HNMDR_MGMT_STATE_DISCOVERED,   // Added via Avahi Discovery
+    HNMDR_MGMT_STATE_RECOVERED,    // Added from config file, prior association
+    HNMDR_MGMT_STATE_OPT_INFO,     // REST read to aquire basic operating info
+    HNMDR_MGMT_STATE_OWNER_INFO,   // REST read for current ownership
+    HNMDR_MGMT_STATE_UNCLAIMED,    // Device is waiting to be claimed 
+    HNMDR_MGMT_STATE_OTHER_MNGR,   // Device is currently owner by other manager
+    HNMDR_MGMT_STATE_ACTIVE,       // Device is active, responding to period health checks  
+    HNMDR_MGMT_STATE_OWNER_CLAIM,  // REST write to establish device management
+    HNMDR_MGMT_STATE_OWNER_AFFIRM, // REST write to reassert management configuration settings.
+    HNMDR_MGMT_STATE_DISAPPEARING, // Avahi notification that device is offline
+    HNMDR_MGMT_STATE_OFFLINE       // Recent attempts to contact device have been unsuccessful
+}HNMDR_MGMT_STATE_T;
 
-typedef enum HNManagedDeviceRecordOwnerStateEnum
-{
-    HNMDR_OWNER_STATE_NOTSET,
-    HNMDR_OWNER_STATE_UNKNOWN,
-}HNMDR_OWNER_STATE_T;
+//typedef enum HNManagedDeviceRecordOwnerStateEnum
+//{
+//    HNMDR_OWNER_STATE_NOTSET,
+//    HNMDR_OWNER_STATE_UNKNOWN,
+//}HNMDR_OWNER_STATE_T;
 
 typedef enum HNManagedDeviceListResultEnum
 {
@@ -70,8 +80,8 @@ class HNMDARAddress
 class HNMDARecord
 {
     private:
-        HNMDR_DISC_STATE_T   discoveryState;
-        HNMDR_OWNER_STATE_T  ownershipState;
+        HNMDR_MGMT_STATE_T   mgmtState;
+        //HNMDR_OWNER_STATE_T  ownershipState;
 
         std::string discID;
         HNodeID     hnodeID;

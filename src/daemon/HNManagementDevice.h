@@ -25,7 +25,8 @@
 typedef enum HNManagementDeviceResultEnum
 {
   HNMD_RESULT_SUCCESS,
-  HNMD_RESULT_FAILURE
+  HNMD_RESULT_FAILURE,
+  HNMD_RESULT_NOT_AUTHORIZED
 }HNMD_RESULT_T;
 
 class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDispatchInf
@@ -73,6 +74,8 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
         HNMD_RESULT_T initConfig();
         HNMD_RESULT_T readConfig();
         HNMD_RESULT_T updateConfig();
+
+        HNMD_RESULT_T generateJWT( std::string username, uint duration, std::string &token );
 
     protected:
         

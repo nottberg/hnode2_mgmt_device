@@ -29,6 +29,8 @@ HNSCGIMsg::HNSCGIMsg()
 
     m_cSource = NULL;
     m_cSink = NULL;
+
+    m_contentMoved = 0;
 }
 
 HNSCGIMsg::~HNSCGIMsg()
@@ -314,7 +316,27 @@ HNSCGIMsg::finalizeLocalContent()
 {
     uint size = m_localContent.tellp();
     std::cout << "finalizeLocalContent: " << size << std::endl;
+    m_contentMoved = 0;
     setContentLength(size);
+}
+
+void 
+HNSCGIMsg::readContentToLocal()
+{
+    m_localContent.clear();
+    setContentSink(this);
+
+    HNSS_RESULT_T status = HNSS_RESULT_MSG_CONTENT;
+    while( status == HNSS_RESULT_MSG_CONTENT )
+    {
+        status = xferContentChunk( 4096 );
+    }
+}
+
+std::istream& 
+HNSCGIMsg::getLocalInputStream()
+{
+    return m_localContent;
 }
 
 HNSS_RESULT_T 

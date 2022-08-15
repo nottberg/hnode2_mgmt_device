@@ -135,6 +135,9 @@ class HNSCGIMsg : public HNPRRContentSource, public HNPRRContentSink
 
         std::ostream& useLocalContentSource();
         void finalizeLocalContent();
+        
+        void readContentToLocal();
+        std::istream& getLocalInputStream();
 
         HNSS_RESULT_T xferContentChunk( uint maxChunkLength );
 
