@@ -17,7 +17,7 @@ typedef enum HNManagedDeviceRecordManagementStateEnum
     HNMDR_MGMT_STATE_OPT_INFO,     // REST read to aquire basic operating info
     HNMDR_MGMT_STATE_OWNER_INFO,   // REST read for current ownership
     HNMDR_MGMT_STATE_UNCLAIMED,    // Device is waiting to be claimed 
-    HNMDR_MGMT_STATE_OTHER_MNGR,   // Device is currently owner by other manager
+    HNMDR_MGMT_STATE_OTHER_MGR,    // Device is currently owner by other manager
     HNMDR_MGMT_STATE_ACTIVE,       // Device is active, responding to period health checks  
     HNMDR_MGMT_STATE_OWNER_CLAIM,  // REST write to establish device management
     HNMDR_MGMT_STATE_OWNER_AFFIRM, // REST write to reassert management configuration settings.
@@ -140,6 +140,12 @@ class HNManagedDeviceArbiter
 
         // Should the monitor still be running.
         bool runMonitor;
+
+        uint m_monitorWaitTime;
+
+        void setNextMonitorState( HNMDARecord &device, HNMDR_MGMT_STATE_T nextState, uint minValue );
+
+        HNMDL_RESULT_T updateDeviceOperationalInfo( HNMDARecord &device );
 
     protected:
         void runMonitoringLoop();

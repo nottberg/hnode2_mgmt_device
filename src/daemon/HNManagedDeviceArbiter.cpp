@@ -3,13 +3,26 @@
 #include <iostream>
 #include <regex>
 
-#include "Poco/Thread.h"
-#include "Poco/Runnable.h"
-#include "Poco/Net/IPAddress.h"
-#include "Poco/Net/NetException.h"
+#include <Poco/Thread.h>
+#include <Poco/Runnable.h>
+#include <Poco/StreamCopier.h>
+#include <Poco/String.h>
+#include <Poco/StringTokenizer.h>
+
+#include <Poco/JSON/Object.h>
+#include <Poco/JSON/Parser.h>
+
+#include <Poco/Net/IPAddress.h>
+#include <Poco/Net/NetException.h>
+#include <Poco/Net/HTTPClientSession.h>
+#include <Poco/Net/HTTPRequest.h>
+#include <Poco/Net/HTTPResponse.h>
+#include <Poco/URI.h>
 
 #include "HNManagedDeviceArbiter.h"
 
+namespace pjs = Poco::JSON;
+namespace pdy = Poco::Dynamic;
 namespace pns = Poco::Net;
 
 HNMDARAddress::HNMDARAddress()
@@ -218,6 +231,26 @@ HNMDARecord::getManagementStateStr()
 {
     if( HNMDR_MGMT_STATE_ACTIVE == m_mgmtState )
         return "ACTIVE";
+    else if( HNMDR_MGMT_STATE_DISCOVERED == m_mgmtState )
+        return "DISCOVERED";
+    else if( HNMDR_MGMT_STATE_RECOVERED == m_mgmtState )
+        return "RECOVERED";
+    else if( HNMDR_MGMT_STATE_OPT_INFO == m_mgmtState )
+        return "OPT_INFO";
+    else if( HNMDR_MGMT_STATE_OWNER_INFO == m_mgmtState )
+        return "OWNER_INFO";
+    else if( HNMDR_MGMT_STATE_UNCLAIMED == m_mgmtState )
+        return "UNCLAIMED";
+    else if( HNMDR_MGMT_STATE_OTHER_MGR == m_mgmtState )
+        return "OTHER_MGR";
+    else if( HNMDR_MGMT_STATE_OWNER_CLAIM == m_mgmtState )
+        return "OWNER_CLAIM";
+    else if( HNMDR_MGMT_STATE_OWNER_AFFIRM == m_mgmtState )
+        return "OWNER_AFFIRM";
+    else if( HNMDR_MGMT_STATE_DISAPPEARING == m_mgmtState )
+        return "DISAPPEARING";
+    else if( HNMDR_MGMT_STATE_OFFLINE == m_mgmtState )
+        return "OFFLINE";
     else if( HNMDR_MGMT_STATE_NOTSET == m_mgmtState )
         return "NOTSET";
 
@@ -493,16 +526,93 @@ HNManagedDeviceArbiter::start()
     ( (HNMDARunner*) thelp )->startThread();
 }
 
+void
+HNManagedDeviceArbiter::setNextMonitorState( HNMDARecord &device, HNMDR_MGMT_STATE_T nextState, uint minValue )
+{
+    device.setManagementState( nextState );
+
+    if( minValue < m_monitorWaitTime )
+        m_monitorWaitTime = minValue;
+}
+
 void 
 HNManagedDeviceArbiter::runMonitoringLoop()
 {
     std::cout << "HNManagedDeviceArbiter::runMonitoringLoop()" << std::endl;
 
+    m_monitorWaitTime = 10;
+
     // Run the main loop
     while( runMonitor == true )
     {
-        sleep( 10 );
+        sleep( m_monitorWaitTime );
+        m_monitorWaitTime = 10;
+
         std::cout << "HNManagedDeviceArbiter::monitor wakeup" << std::endl;
+
+        // Walk through known devices and take any pending actions
+        for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
+        {
+            std::cout << "  Device - crc32: " << it->second.getCRC32ID() << "  type: " << it->second.getDeviceType() << "   state: " <<  it->second.getManagementStateStr() << std::endl;
+
+            switch( it->second.getManagementState() )
+            {
+                // Added via Avahi Discovery
+                case HNMDR_MGMT_STATE_DISCOVERED:
+                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_OPT_INFO, 0 );
+                break;
+
+                // Added from config file, prior association
+                case HNMDR_MGMT_STATE_RECOVERED:
+                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_OPT_INFO, 0 );
+                break;
+
+                // REST read to aquire basic operating info
+                case HNMDR_MGMT_STATE_OPT_INFO:
+                    if( updateDeviceOperationalInfo( it->second ) != HNMDL_RESULT_SUCCESS )
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                    else
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OWNER_INFO, 0 );
+                break;
+
+                // REST read for current ownership
+                case HNMDR_MGMT_STATE_OWNER_INFO:
+                break;
+
+                // Device is waiting to be claimed 
+                case HNMDR_MGMT_STATE_UNCLAIMED:
+                break;
+
+                // Device is currently owner by other manager
+                case HNMDR_MGMT_STATE_OTHER_MGR:
+                break;
+
+                // Device is active, responding to period health checks
+                case HNMDR_MGMT_STATE_ACTIVE:
+                break;
+
+                // REST write to establish device management
+                case HNMDR_MGMT_STATE_OWNER_CLAIM:
+                break;
+
+                // REST write to reassert management configuration settings.
+                case HNMDR_MGMT_STATE_OWNER_AFFIRM:
+                break;
+
+                // Avahi notification that device is offline
+                case HNMDR_MGMT_STATE_DISAPPEARING:
+                break;
+
+                // Recent attempts to contact device have been unsuccessful
+                case HNMDR_MGMT_STATE_OFFLINE:
+                break;
+
+                // These should not occur in normal operation, something very wrong.
+                case HNMDR_MGMT_STATE_NOTSET:
+                default:
+                break;
+            }
+        }
     }
 
     std::cout << "HNManagedDeviceArbiter::monitor exit" << std::endl;
@@ -528,6 +638,42 @@ void
 HNManagedDeviceArbiter::killMonitoringLoop()
 {
     runMonitor = false;    
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/info" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_GET, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    session.sendRequest( request );
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << response.getStatus() << " " << response.getReason() << " " << response.getContentLength() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    std::string body;
+    Poco::StreamCopier::copyToString( rs, body );
+    std::cout << body << std::endl;
+
+    return HNMDL_RESULT_SUCCESS;
 }
 
 
