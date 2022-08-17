@@ -138,6 +138,9 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     // Setup the decoder for proxy requests that will be handled locally.
     registerProxyEndpointsFromOpenAPI( g_HNode2ProxyMgmtAPI );
 
+    // Tell the arbiter our CRC32ID so we can filter self discovery
+    arbiter.setSelfCRC32ID( m_hnodeDev.getHNodeIDCRC32Str() );
+
     // Setup the queue for requests from the SCGI interface
     m_scgiRequestQueue.init();
 

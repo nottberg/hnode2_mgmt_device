@@ -11,18 +11,20 @@ class HNMDARunner;
 
 typedef enum HNManagedDeviceRecordManagementStateEnum
 {
-    HNMDR_MGMT_STATE_NOTSET,       // Default value
-    HNMDR_MGMT_STATE_DISCOVERED,   // Added via Avahi Discovery
-    HNMDR_MGMT_STATE_RECOVERED,    // Added from config file, prior association
-    HNMDR_MGMT_STATE_OPT_INFO,     // REST read to aquire basic operating info
-    HNMDR_MGMT_STATE_OWNER_INFO,   // REST read for current ownership
-    HNMDR_MGMT_STATE_UNCLAIMED,    // Device is waiting to be claimed 
-    HNMDR_MGMT_STATE_OTHER_MGR,    // Device is currently owner by other manager
-    HNMDR_MGMT_STATE_ACTIVE,       // Device is active, responding to period health checks  
-    HNMDR_MGMT_STATE_OWNER_CLAIM,  // REST write to establish device management
-    HNMDR_MGMT_STATE_OWNER_AFFIRM, // REST write to reassert management configuration settings.
-    HNMDR_MGMT_STATE_DISAPPEARING, // Avahi notification that device is offline
-    HNMDR_MGMT_STATE_OFFLINE       // Recent attempts to contact device have been unsuccessful
+    HNMDR_MGMT_STATE_NOTSET,        // Default value
+    HNMDR_MGMT_STATE_DISCOVERED,    // Added via Avahi Discovery
+    HNMDR_MGMT_STATE_RECOVERED,     // Added from config file, prior association
+    HNMDR_MGMT_STATE_SELF,          // This record is for myself - the management device itself
+    HNMDR_MGMT_STATE_OPT_INFO,      // REST read to aquire basic operating info
+    HNMDR_MGMT_STATE_OWNER_INFO,    // REST read for current ownership
+    HNMDR_MGMT_STATE_UNCLAIMED,     // Device is waiting to be claimed 
+    HNMDR_MGMT_STATE_NOT_AVAILABLE, // Device is not currently owned, but not available for claiming 
+    HNMDR_MGMT_STATE_OTHER_MGR,     // Device is currently owner by other manager
+    HNMDR_MGMT_STATE_ACTIVE,        // Device is active, responding to period health checks  
+    HNMDR_MGMT_STATE_OWNER_CLAIM,   // REST write to establish device management
+    HNMDR_MGMT_STATE_OWNER_AFFIRM,  // REST write to reassert management configuration settings.
+    HNMDR_MGMT_STATE_DISAPPEARING,  // Avahi notification that device is offline
+    HNMDR_MGMT_STATE_OFFLINE        // Recent attempts to contact device have been unsuccessful
 }HNMDR_MGMT_STATE_T;
 
 //typedef enum HNManagedDeviceRecordOwnerStateEnum
@@ -119,6 +121,11 @@ class HNMDARecord
         std::string getName();
         std::string getCRC32ID();
 
+        bool isOwnedByMe( std::string mgmtCRC32ID );
+        bool isOwnedByOther();
+        bool isUnclaimed();
+        bool isAvailableToPair();
+
         void getAddressList( std::vector< HNMDARAddress > &addrList );
 
         HNMDL_RESULT_T findPreferredConnection( HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo );
@@ -131,6 +138,9 @@ class HNMDARecord
 class HNManagedDeviceArbiter
 {
     private:
+
+        // The CRC32ID for the managment node itself.
+        std::string m_selfCRC32ID;
 
         // A map of known hnode2 devices
         std::map< std::string, HNMDARecord > mdrMap;
@@ -146,6 +156,7 @@ class HNManagedDeviceArbiter
         void setNextMonitorState( HNMDARecord &device, HNMDR_MGMT_STATE_T nextState, uint minValue );
 
         HNMDL_RESULT_T updateDeviceOperationalInfo( HNMDARecord &device );
+        HNMDL_RESULT_T updateDeviceOwnerInfo( HNMDARecord &device );
 
     protected:
         void runMonitoringLoop();
@@ -157,6 +168,9 @@ class HNManagedDeviceArbiter
 
         HNMDL_RESULT_T notifyDiscoverAdd( HNMDARecord &record );
         HNMDL_RESULT_T notifyDiscoverRemove( HNMDARecord &record );
+
+        void setSelfCRC32ID( std::string crc32ID );
+        std::string getSelfCRC32ID();
 
         void start();
         void shutdown();
