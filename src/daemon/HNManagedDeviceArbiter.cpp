@@ -231,6 +231,8 @@ HNMDARecord::getManagementStateStr()
 {
     if( HNMDR_MGMT_STATE_ACTIVE == m_mgmtState )
         return "ACTIVE";
+    else if( HNMDR_MGMT_STATE_SELF == m_mgmtState )
+        return "SELF";
     else if( HNMDR_MGMT_STATE_DISCOVERED == m_mgmtState )
         return "DISCOVERED";
     else if( HNMDR_MGMT_STATE_RECOVERED == m_mgmtState )
@@ -447,6 +449,95 @@ HNMDARecord::debugPrint( uint offset )
     }
 }
 
+HNMDConfigData::HNMDConfigData()
+{
+    m_fieldMask = HNMDC_FLDMASK_NONE;
+    m_claim = false;
+}
+
+HNMDConfigData::~HNMDConfigData()
+{
+
+}
+
+void
+HNMDConfigData::clear()
+{
+    m_fieldMask = HNMDC_FLDMASK_NONE;
+    m_claim = false;
+
+    m_crc32ID.clear();
+}
+
+uint
+HNMDConfigData::getFieldMask()
+{
+    return m_fieldMask;
+}
+
+void
+HNMDConfigData::setCRC32ID( std::string value )
+{
+    m_fieldMask |= HNMDC_FLDMASK_CRC32ID;
+    m_crc32ID = value;
+}
+
+void
+HNMDConfigData::setClaim( bool value )
+{
+    m_fieldMask |= HNMDC_FLDMASK_CLAIM;
+    m_claim = value;
+}
+
+HNMDL_RESULT_T
+HNMDConfigData::setFromJSON( std::string crc32ID, std::istream* bodyStream )
+{
+    // Clear things to start
+    clear();
+
+    // Set the crc32ID this refers too
+    setCRC32ID( crc32ID );
+
+    // Parse the json body of the request
+    try
+    {
+        // Attempt to parse the json    
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( *bodyStream );
+
+        // Get a pointer to the root object
+        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
+
+        if( jsRoot->has( "claim" ) )
+        {
+            setClaim( jsRoot->getValue<bool>( "claim" ) );
+        }
+
+        //if( jsRoot->has( "description" ) )
+        //{
+        //    zone.setDesc( jsRoot->getValue<std::string>( "description" ) );
+        //    m_zoneUpdateMask |= HNID_ZU_FLDMASK_DESC;
+        //}
+    }
+    catch( Poco::Exception ex )
+    {
+        std::cout << "HNMDConfigData::setFromJSON exception: " << ex.displayText() << std::endl;
+        // Request body was not understood
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    // Done
+    return HNMDL_RESULT_SUCCESS;
+}
+
+#if 0
+    private:
+        uint m_fieldMask;
+
+        bool m_claim;
+};
+#endif
+
 HNManagedDeviceArbiter::HNManagedDeviceArbiter()
 {
     runMonitor = false;
@@ -508,6 +599,19 @@ std::string
 HNManagedDeviceArbiter::getSelfCRC32ID()
 {
     return m_selfCRC32ID;
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::getDeviceCopy( std::string crc32ID, HNMDARecord &device )
+{
+    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+
+    if( it == mdrMap.end() )
+        return HNMDL_RESULT_FAILURE;
+
+    device = it->second;
+
+    return HNMDL_RESULT_SUCCESS;
 }
 
 void

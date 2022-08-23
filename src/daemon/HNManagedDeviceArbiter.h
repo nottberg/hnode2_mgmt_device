@@ -135,6 +135,37 @@ class HNMDARecord
         void debugPrint( uint offset );
 };
 
+typedef enum HNManagedDeviceConfigDataFileMaskEnum
+{
+    HNMDC_FLDMASK_NONE    = 0x00000000,
+    HNMDC_FLDMASK_CRC32ID = 0x00000001,    
+    HNMDC_FLDMASK_CLAIM   = 0x00000002    
+}HNMDC_FLDMASK_T;
+
+class HNMDConfigData
+{
+    public:
+         HNMDConfigData();
+        ~HNMDConfigData();
+
+        void clear();
+
+        uint getFieldMask();
+
+        void setCRC32ID( std::string value );
+
+        void setClaim( bool value );
+
+        HNMDL_RESULT_T setFromJSON( std::string crc32ID, std::istream *bodyStream );
+
+    private:
+        uint m_fieldMask;
+
+        std::string m_crc32ID;
+
+        bool m_claim;
+};
+
 class HNManagedDeviceArbiter
 {
     private:
@@ -175,6 +206,7 @@ class HNManagedDeviceArbiter
         void start();
         void shutdown();
 
+        HNMDL_RESULT_T getDeviceCopy( std::string crc32ID, HNMDARecord &device );
         void getDeviceListCopy( std::vector< HNMDARecord > &deviceList );
 
         HNMDL_RESULT_T lookupConnectionInfo( std::string crc32ID, HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo );

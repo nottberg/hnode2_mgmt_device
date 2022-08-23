@@ -162,6 +162,9 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     // Buffer where events are returned 
     events = (struct epoll_event *) calloc( MAXEVENTS, sizeof event );
 
+    // Start accepting device notifications
+    m_hnodeDev.setNotifySink( this );
+
     // Start the HNode Device
     m_hnodeDev.start();
 
@@ -460,6 +463,12 @@ HNManagementDevice::updateConfig()
     std::cout << "Config saved" << std::endl;
 
     return HNMD_RESULT_SUCCESS;
+}
+
+void
+HNManagementDevice::hndnConfigChange( HNodeDevice *parent )
+{
+    std::cout << "HNManagementDevice::hndnConfigChange() - entry" << std::endl;
 }
 
 void 
@@ -858,14 +867,24 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
     {
         std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
         pjs::Object jsRoot;
-        pjs::Array jsDevArray;
+        pjs::Array jsOwnedArray;
+        pjs::Array jsUnclaimedArray;
+        pjs::Array jsOtherOwnerArray;
+        pjs::Array jsUnavailableArray;
 
         std::vector< HNMDARecord > deviceList;
         arbiter.getDeviceListCopy( deviceList );
+
+
         for( std::vector< HNMDARecord >::iterator dit = deviceList.begin(); dit != deviceList.end(); dit++ )
         {
             pjs::Object jsDevice;
             pjs::Array  jsAddrArray;
+
+            // Don't report the self device information here, 
+            // do it via the local status request or similar.
+            if( dit->getManagementState() == HNMDR_MGMT_STATE_SELF )
+                continue;
 
             jsDevice.set( "name", dit->getName() );
             jsDevice.set( "hnodeID", dit->getHNodeIDStr() );
@@ -873,7 +892,7 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
             jsDevice.set( "deviceVersion", dit->getDeviceVersion() );
             jsDevice.set( "discID", dit->getDiscoveryID() );
             jsDevice.set( "crc32ID", dit->getCRC32ID() );
-
+            jsDevice.set( "mgmtState", dit->getManagementStateStr() );
             std::vector< HNMDARAddress > addrList;
             dit->getAddressList( addrList );
             for( std::vector< HNMDARAddress >::iterator ait = addrList.begin(); ait != addrList.end(); ait++ )
@@ -890,10 +909,44 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
 
             jsDevice.set( "addresses", jsAddrArray );
 
-            jsDevArray.add( jsDevice );
+            switch( dit->getManagementState() )
+            {
+                case HNMDR_MGMT_STATE_ACTIVE:
+                case HNMDR_MGMT_STATE_OWNER_CLAIM:  
+                case HNMDR_MGMT_STATE_OWNER_AFFIRM: 
+                    jsOwnedArray.add( jsDevice );
+                break;
+
+                case HNMDR_MGMT_STATE_UNCLAIMED:
+                    jsUnclaimedArray.add( jsDevice );
+                break;
+
+                case HNMDR_MGMT_STATE_OTHER_MGR:
+                    jsOtherOwnerArray.add( jsDevice );
+                break;
+
+                // FIXME - some of these states need further qualifications to be accurate
+                case HNMDR_MGMT_STATE_DISAPPEARING:
+                case HNMDR_MGMT_STATE_OFFLINE:
+                case HNMDR_MGMT_STATE_NOT_AVAILABLE:
+                case HNMDR_MGMT_STATE_DISCOVERED:
+                case HNMDR_MGMT_STATE_RECOVERED:
+                case HNMDR_MGMT_STATE_OPT_INFO:
+                case HNMDR_MGMT_STATE_OWNER_INFO:
+                case HNMDR_MGMT_STATE_NOTSET:
+                default:
+                {
+                    // Default to unavailable
+                    jsUnavailableArray.add( jsDevice );
+                }
+            }
         }
 
-        jsRoot.set( "devices", jsDevArray );
+        // Report the owned, unclaimed, other-owner, and unavailable arrays
+        jsRoot.set( "ownedDevices", jsOwnedArray );
+        jsRoot.set( "unclaimedDevices", jsUnclaimedArray );
+        jsRoot.set( "otherOwnerDevices", jsOtherOwnerArray );
+        jsRoot.set( "unavailableDevices", jsUnavailableArray );
 
         // Render into a json string.
         try {
@@ -908,6 +961,95 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         reqRR->getRspMsg().setContentType("application/json");
         reqRR->getRspMsg().setStatusCode(200);
         reqRR->getRspMsg().setReason("OK");
+        return;
+    }
+    else if( "getDeviceMgmtStatus" == opID )
+    {
+        std::string devCRC32ID;
+
+        if( opData->getParam( "devCRC32ID", devCRC32ID ) == true )
+        {
+            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
+            opData->responseSend();
+            return; 
+        }
+
+        std::cout << "=== Get Device Mgmt Status Request (id: " << devCRC32ID << ") ===" << std::endl;
+
+        std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
+        pjs::Object jsRoot;
+
+        HNMDARecord device;
+        if( arbiter.getDeviceCopy( devCRC32ID, device ) != HNMDL_RESULT_SUCCESS )
+        {
+            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
+            opData->responseSend();
+            return; 
+        }
+
+        jsRoot.set( "name", device.getName() );
+        jsRoot.set( "hnodeID", device.getHNodeIDStr() );
+        jsRoot.set( "deviceType", device.getDeviceType() );
+        jsRoot.set( "deviceVersion", device.getDeviceVersion() );
+        jsRoot.set( "discID", device.getDiscoveryID() );
+        jsRoot.set( "crc32ID", device.getCRC32ID() );
+        jsRoot.set( "mgmtState", device.getManagementStateStr() );
+
+        pjs::Array  jsAddrArray;
+        std::vector< HNMDARAddress > addrList;
+        device.getAddressList( addrList );
+        for( std::vector< HNMDARAddress >::iterator ait = addrList.begin(); ait != addrList.end(); ait++ )
+        {
+            pjs::Object jsAddress;
+
+            jsAddress.set( "type", ait->getTypeAsStr() );
+            jsAddress.set( "dnsName", ait->getDNSName() );
+            jsAddress.set( "address", ait->getAddress() );
+            jsAddress.set( "port", ait->getPort() );
+
+            jsAddrArray.add( jsAddress );
+        }
+
+        jsRoot.set( "addresses", jsAddrArray );
+
+        // Render into a json string.
+        try {
+            pjs::Stringifier::stringify( jsRoot, msg );
+        } catch( ... ) {
+            // Send back not implemented
+            reqRR->getRspMsg().configAsInternalServerError();
+            return;
+        }
+
+        reqRR->getRspMsg().finalizeLocalContent();
+        reqRR->getRspMsg().setContentType("application/json");
+        reqRR->getRspMsg().setStatusCode(200);
+        reqRR->getRspMsg().setReason("OK");
+        return;
+    }
+    else if( "putDeviceMgmtConfig" == opID )
+    {
+        std::string devCRC32ID;
+        HNMDConfigData cfgData;
+
+        if( opData->getParam( "devCRC32ID", devCRC32ID ) == true )
+        {
+            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
+            opData->responseSend();
+            return; 
+        }
+
+        std::cout << "=== Put Device Mgmt Config Request (id: " << devCRC32ID << ") ===" << std::endl;
+
+        std::istream *bodyStream = reqRR->getReqMsg().getSourceStreamRef();
+        if( cfgData.setFromJSON( devCRC32ID, bodyStream ) != HNMDL_RESULT_SUCCESS )
+        {
+            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
+            opData->responseSend();
+            return; 
+        }
+
+        reqRR->getRspMsg().configAsNotImplemented();
         return;
     }
 
@@ -1022,7 +1164,47 @@ const std::string g_HNode2ProxyMgmtAPI = R"(
             }
           }
         }
-      }      
+      },
+      "/hnode2/mgmt/device-inventory/{devCRC32ID}": {
+        "get": {
+          "summary": "Get managment status for specific remote device.",
+          "operationId": "getDeviceMgmtStatus",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        },
+        "put": {
+          "summary": "Change management configuration for a remote device.",
+          "operationId": "putDeviceMgmtConfig",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        }        
+      }        
   }
 }
 )";

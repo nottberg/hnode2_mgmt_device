@@ -29,7 +29,7 @@ typedef enum HNManagementDeviceResultEnum
   HNMD_RESULT_NOT_AUTHORIZED
 }HNMD_RESULT_T;
 
-class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDispatchInf
+class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDispatchInf, public HNDEventNotifyInf 
 {
     private:
         bool _helpRequested   = false;
@@ -81,6 +81,8 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
         
         // HNDevice REST callback
         virtual void dispatchEP( HNodeDevice *parent, HNOperationData *opData );
+
+        virtual void hndnConfigChange( HNodeDevice *parent );
 
         void defineOptions( Poco::Util::OptionSet& options );
         void handleOption( const std::string& name, const std::string& value );
