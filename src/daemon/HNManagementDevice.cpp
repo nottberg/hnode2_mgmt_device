@@ -139,7 +139,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     registerProxyEndpointsFromOpenAPI( g_HNode2ProxyMgmtAPI );
 
     // Tell the arbiter our CRC32ID so we can filter self discovery
-    arbiter.setSelfCRC32ID( m_hnodeDev.getHNodeIDCRC32Str() );
+    m_arbiter.setSelfInfo( m_hnodeDev.getHNodeIDStr() );
 
     // Setup the queue for requests from the SCGI interface
     m_scgiRequestQueue.init();
@@ -169,7 +169,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     m_hnodeDev.start();
 
     // Start the Managed Device Arbiter
-    arbiter.start();
+    m_arbiter.start();
 
     // Start processing requests from the browser via SCGI
     reqsink.start( m_instanceName );
@@ -264,7 +264,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
 
                             notifyRec.addAddressInfo( event->getHostname(), event->getAddress(), event->getPort() );
 
-                            HNMDL_RESULT_T result = arbiter.notifyDiscoverAdd( notifyRec );
+                            HNMDL_RESULT_T result = m_arbiter.notifyDiscoverAdd( notifyRec );
                             if( result != HNMDL_RESULT_SUCCESS )
                             {
                                 // Note error
@@ -276,7 +276,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
                         break;
                     }
 
-                    arbiter.debugPrint();
+                    m_arbiter.debugPrint();
 
                     avBrowser.getEventQueue().releaseRecord( event );
                 }
@@ -336,7 +336,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     m_proxySeq.shutdown();
     avBrowser.shutdown();
     reqsink.shutdown();
-    arbiter.shutdown();
+    m_arbiter.shutdown();
     //m_hnodeDev.shutdown();
 
     waitForTerminationRequest();
@@ -634,7 +634,7 @@ HNManagementDevice::checkForProxyRequest( HNSCGIRR *reqRR )
     std::string crc32ID = pathStrs[3];
 
     HNMDARAddress dcInfo;
-    HNMDL_RESULT_T result = arbiter.lookupConnectionInfo( crc32ID, HMDAR_ADDRTYPE_IPV4, dcInfo );
+    HNMDL_RESULT_T result = m_arbiter.lookupConnectionInfo( crc32ID, HMDAR_ADDRTYPE_IPV4, dcInfo );
     if( result != HNMDL_RESULT_SUCCESS )
     {
         std::cout << "WARNING: Proxy failed to lookup device: " << crc32ID << std::endl;
@@ -873,7 +873,7 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         pjs::Array jsUnavailableArray;
 
         std::vector< HNMDARecord > deviceList;
-        arbiter.getDeviceListCopy( deviceList );
+        m_arbiter.getDeviceListCopy( deviceList );
 
 
         for( std::vector< HNMDARecord >::iterator dit = deviceList.begin(); dit != deviceList.end(); dit++ )
@@ -909,31 +909,18 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
 
             jsDevice.set( "addresses", jsAddrArray );
 
-            switch( dit->getManagementState() )
+            switch( dit->getOwnershipState() )
             {
-                case HNMDR_MGMT_STATE_ACTIVE:
-                case HNMDR_MGMT_STATE_OWNER_CLAIM:  
-                case HNMDR_MGMT_STATE_OWNER_AFFIRM: 
+                case HNMDR_OWNER_STATE_MINE: 
                     jsOwnedArray.add( jsDevice );
                 break;
 
-                case HNMDR_MGMT_STATE_UNCLAIMED:
+                case HNMDR_OWNER_STATE_AVAILABLE:
                     jsUnclaimedArray.add( jsDevice );
                 break;
 
-                case HNMDR_MGMT_STATE_OTHER_MGR:
-                    jsOtherOwnerArray.add( jsDevice );
-                break;
-
-                // FIXME - some of these states need further qualifications to be accurate
-                case HNMDR_MGMT_STATE_DISAPPEARING:
-                case HNMDR_MGMT_STATE_OFFLINE:
-                case HNMDR_MGMT_STATE_NOT_AVAILABLE:
-                case HNMDR_MGMT_STATE_DISCOVERED:
-                case HNMDR_MGMT_STATE_RECOVERED:
-                case HNMDR_MGMT_STATE_OPT_INFO:
-                case HNMDR_MGMT_STATE_OWNER_INFO:
-                case HNMDR_MGMT_STATE_NOTSET:
+                // All other states are reported as unavailable
+                case HNMDR_OWNER_STATE_OTHER:
                 default:
                 {
                     // Default to unavailable
@@ -945,7 +932,6 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         // Report the owned, unclaimed, other-owner, and unavailable arrays
         jsRoot.set( "ownedDevices", jsOwnedArray );
         jsRoot.set( "unclaimedDevices", jsUnclaimedArray );
-        jsRoot.set( "otherOwnerDevices", jsOtherOwnerArray );
         jsRoot.set( "unavailableDevices", jsUnavailableArray );
 
         // Render into a json string.
@@ -980,7 +966,7 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         pjs::Object jsRoot;
 
         HNMDARecord device;
-        if( arbiter.getDeviceCopy( devCRC32ID, device ) != HNMDL_RESULT_SUCCESS )
+        if( m_arbiter.getDeviceCopy( devCRC32ID, device ) != HNMDL_RESULT_SUCCESS )
         {
             opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
             opData->responseSend();
@@ -1027,29 +1013,42 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         reqRR->getRspMsg().setReason("OK");
         return;
     }
-    else if( "putDeviceMgmtConfig" == opID )
+    else if( "postDeviceMgmtCommand" == opID )
     {
         std::string devCRC32ID;
-        HNMDConfigData cfgData;
 
         if( opData->getParam( "devCRC32ID", devCRC32ID ) == true )
         {
-            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
-            opData->responseSend();
+            reqRR->getRspMsg().configAsInternalServerError();
             return; 
         }
 
-        std::cout << "=== Put Device Mgmt Config Request (id: " << devCRC32ID << ") ===" << std::endl;
+        std::cout << "=== Post Device Mgmt Command (id: " << devCRC32ID << ") ===" << std::endl;
 
-        std::istream *bodyStream = reqRR->getReqMsg().getSourceStreamRef();
-        if( cfgData.setFromJSON( devCRC32ID, bodyStream ) != HNMDL_RESULT_SUCCESS )
+        // Pull the content portion into the local buffer.
+        reqRR->getReqMsg().readContentToLocal();
+
+        std::istream *bodyStream = &reqRR->getReqMsg().getLocalInputStream();
+
+        std::cout << "stream state: " << bodyStream->rdstate() << std::endl;
+        std::cout << "stream 1char: " << bodyStream->peek() << std::endl;
+
+        // Parse the command request, erroring if it isn't ok
+        if( m_arbiter.setDeviceMgmtCmdFromJSON( devCRC32ID, bodyStream ) != HNMDL_RESULT_SUCCESS )
         {
-            opData->responseSetStatusAndReason( HNR_HTTP_INTERNAL_SERVER_ERROR );
-            opData->responseSend();
-            return; 
+            reqRR->getRspMsg().configAsInternalServerError();
+            return;
         }
 
-        reqRR->getRspMsg().configAsNotImplemented();
+        // Kick off execution of the new command request
+        if( m_arbiter.startDeviceMgmtCmd( devCRC32ID ) != HNMDL_RESULT_SUCCESS )
+        {
+            reqRR->getRspMsg().configAsInternalServerError();
+            return; 
+        }
+        
+        reqRR->getRspMsg().setStatusCode(200);
+        reqRR->getRspMsg().setReason("OK");
         return;
     }
 
@@ -1184,10 +1183,12 @@ const std::string g_HNode2ProxyMgmtAPI = R"(
               "description": "Invalid status value"
             }
           }
-        },
-        "put": {
-          "summary": "Change management configuration for a remote device.",
-          "operationId": "putDeviceMgmtConfig",
+        }
+      },
+      "/hnode2/mgmt/device-inventory/{devCRC32ID}/command": {
+        "post": {
+          "summary": "Request a change to device configuration.",
+          "operationId": "postDeviceMgmtCommand",
           "responses": {
             "200": {
               "description": "successful operation",

@@ -47,7 +47,7 @@ class HNManagementDevice : public Poco::Util::ServerApplication, public HNDEPDis
 
         HNodeDevice m_hnodeDev;
 
-        HNManagedDeviceArbiter arbiter;
+        HNManagedDeviceArbiter m_arbiter;
         HNSCGISink             reqsink;
         HNProxySequencer       m_proxySeq;
         

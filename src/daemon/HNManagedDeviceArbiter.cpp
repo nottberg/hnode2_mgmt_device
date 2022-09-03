@@ -25,6 +25,125 @@ namespace pjs = Poco::JSON;
 namespace pdy = Poco::Dynamic;
 namespace pns = Poco::Net;
 
+HNMDMgmtCmd::HNMDMgmtCmd()
+{
+    m_execState = HNMDC_EXEC_STATE_IDLE;
+    m_cmdType   = HNMDC_CMDTYPE_NOTSET;
+    m_fieldMask = HNMDC_FLDMASK_NONE;
+}
+
+HNMDMgmtCmd::~HNMDMgmtCmd()
+{
+
+}
+
+void
+HNMDMgmtCmd::clear()
+{
+    m_execState = HNMDC_EXEC_STATE_IDLE;
+    m_cmdType   = HNMDC_CMDTYPE_NOTSET;
+    m_fieldMask = HNMDC_FLDMASK_NONE;
+}
+
+HNMDC_CMDTYPE_T
+HNMDMgmtCmd::getType()
+{
+    return m_cmdType;
+}
+
+std::string
+HNMDMgmtCmd::getTypeAsStr()
+{
+    if( HNMDC_CMDTYPE_CLAIMDEV == m_cmdType )
+        return "claim";
+    else if( HNMDC_CMDTYPE_RELEASEDEV == m_cmdType )
+        return "release";
+    else if( HNMDC_CMDTYPE_SETDEVPARAMS == m_cmdType )
+        return "set_device_parameters";
+    else if( HNMDC_CMDTYPE_NOTSET == m_cmdType )
+        return "notset";
+
+    return "unknown";
+}
+
+bool
+HNMDMgmtCmd::setTypeFromStr( std::string value )
+{
+    if( "claim" == value )
+    {
+        m_cmdType = HNMDC_CMDTYPE_CLAIMDEV;
+        return false;
+    }
+    else if( "release" == value )
+    {
+        m_cmdType = HNMDC_CMDTYPE_RELEASEDEV;
+        return false;
+    }
+    else if( "set_device_parameters" == value )
+    {
+        m_cmdType = HNMDC_CMDTYPE_SETDEVPARAMS;
+        return false;
+    }
+
+    m_cmdType = HNMDC_CMDTYPE_NOTSET;
+    return true;
+}
+
+void
+HNMDMgmtCmd::setName( std::string value )
+{
+    m_name = value;
+    m_fieldMask |= HNMDC_FLDMASK_NAME;
+}
+
+uint
+HNMDMgmtCmd::getFieldMask()
+{
+    return m_fieldMask;
+}
+
+HNMDL_RESULT_T
+HNMDMgmtCmd::setFromJSON( std::istream *bodyStream )
+{
+    // Clear things to start
+    clear();
+
+    // Parse the json body of the request
+    try
+    {
+        // Attempt to parse the json    
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( *bodyStream );
+
+        // Get a pointer to the root object
+        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
+
+        // All requests must include a command field
+        if( jsRoot->has( "command" ) == false )
+            return HNMDL_RESULT_FAILURE;
+
+        // Set the command type
+        if( setTypeFromStr( jsRoot->getValue<std::string>( "command" ) ) == true )
+        {
+            return HNMDL_RESULT_FAILURE;
+        }
+
+        if( jsRoot->has( "name" ) )
+        {
+            setName( jsRoot->getValue<std::string>( "name" ) );
+        }
+    }
+    catch( Poco::Exception ex )
+    {
+        std::cout << "HNMDMgmtCmd::setFromJSON exception: " << ex.displayText() << std::endl;
+        // Request body was not understood
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    // Done
+    return HNMDL_RESULT_SUCCESS;
+}
+
 HNMDARAddress::HNMDARAddress()
 {
     m_type = HMDAR_ADDRTYPE_NOTSET;
@@ -198,12 +317,55 @@ class HNMDARunner : public Poco::Runnable
 
 HNMDARecord::HNMDARecord()
 {
+    m_mgmtState = HNMDR_MGMT_STATE_NOTSET;
+    m_ownerState = HNMDR_OWNER_STATE_NOTSET;
 
+    m_deviceMutex = NULL;
+}
+
+HNMDARecord::HNMDARecord( const HNMDARecord &srcObj )
+{
+    m_mgmtState   = srcObj.m_mgmtState;
+    m_ownerState  = srcObj.m_ownerState;
+
+    discID       = srcObj.discID;
+    hnodeID      = srcObj.hnodeID;
+    devType      = srcObj.devType;
+    devVersion   = srcObj.devVersion;
+    name         = srcObj.name;
+
+    m_addrList   = srcObj.m_addrList;
+
+    m_mgmtCmd    = srcObj.m_mgmtCmd;
+
+    // Do not copy over a mutex as they are unique
+    // to each object.
+    m_deviceMutex = NULL;
 }
 
 HNMDARecord::~HNMDARecord()
 {
+    if( m_deviceMutex )
+    {
+        delete m_deviceMutex;
+        m_deviceMutex = NULL;
+    }
+}
 
+void
+HNMDARecord::lockForUpdate()
+{
+    if( m_deviceMutex == NULL )
+        m_deviceMutex = new std::mutex();
+
+    m_deviceMutex->lock();
+}
+
+void
+HNMDARecord::unlockForUpdate()
+{
+    if( m_deviceMutex )
+        m_deviceMutex->unlock();
 }
 
 void 
@@ -212,13 +374,11 @@ HNMDARecord::setManagementState( HNMDR_MGMT_STATE_T value )
     m_mgmtState = value;
 }
 
-#if 0
 void 
 HNMDARecord::setOwnershipState( HNMDR_OWNER_STATE_T value )
 {
-    ownershipState = value;
+    m_ownerState = value;
 }
-#endif
 
 HNMDR_MGMT_STATE_T  
 HNMDARecord::getManagementState()
@@ -245,38 +405,44 @@ HNMDARecord::getManagementStateStr()
         return "UNCLAIMED";
     else if( HNMDR_MGMT_STATE_OTHER_MGR == m_mgmtState )
         return "OTHER_MGR";
-    else if( HNMDR_MGMT_STATE_OWNER_CLAIM == m_mgmtState )
-        return "OWNER_CLAIM";
-    else if( HNMDR_MGMT_STATE_OWNER_AFFIRM == m_mgmtState )
-        return "OWNER_AFFIRM";
     else if( HNMDR_MGMT_STATE_DISAPPEARING == m_mgmtState )
         return "DISAPPEARING";
     else if( HNMDR_MGMT_STATE_OFFLINE == m_mgmtState )
         return "OFFLINE";
+    else if( HNMDR_MGMT_STATE_EXEC_CMD == m_mgmtState )
+        return "EXEC_CMD";
+    else if( HNMDR_MGMT_STATE_NOT_AVAILABLE == m_mgmtState )
+        return "NOT_AVAILABLE";
     else if( HNMDR_MGMT_STATE_NOTSET == m_mgmtState )
         return "NOTSET";
 
     return "ERROR";
 }
 
-#if 0
 HNMDR_OWNER_STATE_T 
 HNMDARecord::getOwnershipState()
 {
-    return ownershipState;
+    return m_ownerState;
 }
 
 std::string
 HNMDARecord::getOwnershipStateStr()
 {
-    if( HNMDR_OWNER_STATE_UNKNOWN == ownershipState )
-        return "HNMDR_OWNER_STATE_UNKNOWN";
-    else if( HNMDR_OWNER_STATE_NOTSET == ownershipState )
-        return "HNMDR_OWNER_STATE_NOTSET";
+    if( HNMDR_OWNER_STATE_UNKNOWN == m_ownerState )
+        return "UNKNOWN";
+    else if( HNMDR_OWNER_STATE_MINE == m_ownerState )
+        return "MINE";
+    else if( HNMDR_OWNER_STATE_OTHER == m_ownerState )
+        return "OTHER";
+    else if( HNMDR_OWNER_STATE_AVAILABLE == m_ownerState )
+        return "AVAILABLE";
+    else if( HNMDR_OWNER_STATE_UNAVAILABLE == m_ownerState )
+        return "UNAVAILABLE";
+    else if( HNMDR_OWNER_STATE_NOTSET == m_ownerState )
+        return "NOTSET";
 
     return "ERROR";
 }
-#endif
 
 void 
 HNMDARecord::setDiscoveryID( std::string value )
@@ -326,6 +492,20 @@ HNMDARecord::addAddressInfo( std::string dnsName, std::string address, uint16_t 
     m_addrList.push_back( newAddr );
 }
 
+void
+HNMDARecord::setOwnerID( HNodeID &ownerID )
+{
+    std::string idStr;
+    ownerID.getStr( idStr );
+    m_ownerHNodeID.setFromStr( idStr );
+}
+
+void
+HNMDARecord::clearOwnerID()
+{
+    m_ownerHNodeID.clear();
+}
+
 void 
 HNMDARecord::getAddressList( std::vector< HNMDARAddress > &addrList )
 {
@@ -373,30 +553,6 @@ HNMDARecord::getCRC32ID()
     return hnodeID.getCRC32AsHexStr();
 }
 
-bool 
-HNMDARecord::isOwnedByMe( std::string mgmtCRC32ID )
-{
-    return false;
-}
-
-bool 
-HNMDARecord::isOwnedByOther()
-{
-    return false;
-}
-
-bool 
-HNMDARecord::isUnclaimed()
-{
-    return true;
-}
-
-bool 
-HNMDARecord::isAvailableToPair()
-{
-    return true;
-}
-
 HNMDL_RESULT_T 
 HNMDARecord::findPreferredConnection( HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo )
 {
@@ -432,6 +588,18 @@ HNMDARecord::updateRecord( HNMDARecord &newRecord )
     return HNMDL_RESULT_SUCCESS;
 }
 
+HNMDL_RESULT_T
+HNMDARecord::setMgmtCmdFromJSON( std::istream *bodyStream )
+{
+    return m_mgmtCmd.setFromJSON( bodyStream );
+}
+
+HNMDMgmtCmd& 
+HNMDARecord::getDeviceMgmtCmdRef()
+{
+    return m_mgmtCmd;
+}
+
 void 
 HNMDARecord::debugPrint( uint offset )
 {
@@ -449,95 +617,6 @@ HNMDARecord::debugPrint( uint offset )
     }
 }
 
-HNMDConfigData::HNMDConfigData()
-{
-    m_fieldMask = HNMDC_FLDMASK_NONE;
-    m_claim = false;
-}
-
-HNMDConfigData::~HNMDConfigData()
-{
-
-}
-
-void
-HNMDConfigData::clear()
-{
-    m_fieldMask = HNMDC_FLDMASK_NONE;
-    m_claim = false;
-
-    m_crc32ID.clear();
-}
-
-uint
-HNMDConfigData::getFieldMask()
-{
-    return m_fieldMask;
-}
-
-void
-HNMDConfigData::setCRC32ID( std::string value )
-{
-    m_fieldMask |= HNMDC_FLDMASK_CRC32ID;
-    m_crc32ID = value;
-}
-
-void
-HNMDConfigData::setClaim( bool value )
-{
-    m_fieldMask |= HNMDC_FLDMASK_CLAIM;
-    m_claim = value;
-}
-
-HNMDL_RESULT_T
-HNMDConfigData::setFromJSON( std::string crc32ID, std::istream* bodyStream )
-{
-    // Clear things to start
-    clear();
-
-    // Set the crc32ID this refers too
-    setCRC32ID( crc32ID );
-
-    // Parse the json body of the request
-    try
-    {
-        // Attempt to parse the json    
-        pjs::Parser parser;
-        pdy::Var varRoot = parser.parse( *bodyStream );
-
-        // Get a pointer to the root object
-        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
-
-        if( jsRoot->has( "claim" ) )
-        {
-            setClaim( jsRoot->getValue<bool>( "claim" ) );
-        }
-
-        //if( jsRoot->has( "description" ) )
-        //{
-        //    zone.setDesc( jsRoot->getValue<std::string>( "description" ) );
-        //    m_zoneUpdateMask |= HNID_ZU_FLDMASK_DESC;
-        //}
-    }
-    catch( Poco::Exception ex )
-    {
-        std::cout << "HNMDConfigData::setFromJSON exception: " << ex.displayText() << std::endl;
-        // Request body was not understood
-        return HNMDL_RESULT_FAILURE;
-    }
-
-    // Done
-    return HNMDL_RESULT_SUCCESS;
-}
-
-#if 0
-    private:
-        uint m_fieldMask;
-
-        bool m_claim;
-};
-#endif
-
 HNManagedDeviceArbiter::HNManagedDeviceArbiter()
 {
     runMonitor = false;
@@ -552,13 +631,16 @@ HNManagedDeviceArbiter::~HNManagedDeviceArbiter()
 HNMDL_RESULT_T 
 HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
 {
+    // Scope lock
+    std::lock_guard<std::mutex> guard( m_mapMutex );
+
     // Check if the record is existing, or if this is a new discovery.
     std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( record.getCRC32ID() );
 
     if( it == mdrMap.end() )
     {
         // This is a new record
-        if( record.getCRC32ID() == m_selfCRC32ID )
+        if( record.getCRC32ID() == m_selfHnodeID.getCRC32AsHexStr() )
             record.setManagementState( HNMDR_MGMT_STATE_SELF );
         else
             record.setManagementState( HNMDR_MGMT_STATE_DISCOVERED );
@@ -577,6 +659,9 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
 HNMDL_RESULT_T 
 HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
 {
+    // Scope lock
+    std::lock_guard<std::mutex> guard( m_mapMutex );
+
     // Check if the record is existing, or if this is a new discovery.
     std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( record.getCRC32ID() );
 
@@ -590,20 +675,31 @@ HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
 }
 
 void 
-HNManagedDeviceArbiter::setSelfCRC32ID( std::string crc32ID )
+HNManagedDeviceArbiter::setSelfInfo( std::string hnodeIDStr )
 {
-    m_selfCRC32ID = crc32ID;
+    m_selfHnodeID.setFromStr( hnodeIDStr );
+}
+
+std::string 
+HNManagedDeviceArbiter::getSelfHNodeIDStr()
+{
+    std::string rtnStr;
+    m_selfHnodeID.getStr( rtnStr );
+    return rtnStr;
 }
 
 std::string 
 HNManagedDeviceArbiter::getSelfCRC32ID()
 {
-    return m_selfCRC32ID;
+    return m_selfHnodeID.getCRC32AsHexStr();
 }
 
 HNMDL_RESULT_T
 HNManagedDeviceArbiter::getDeviceCopy( std::string crc32ID, HNMDARecord &device )
 {
+    // Scope lock
+    std::lock_guard<std::mutex> guard( m_mapMutex );
+
     std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
 
     if( it == mdrMap.end() )
@@ -617,6 +713,9 @@ HNManagedDeviceArbiter::getDeviceCopy( std::string crc32ID, HNMDARecord &device 
 void
 HNManagedDeviceArbiter::getDeviceListCopy( std::vector< HNMDARecord > &deviceList )
 {
+    // Scope lock
+    std::lock_guard<std::mutex> guard( m_mapMutex );
+
     for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
     {    
         deviceList.push_back( it->second );
@@ -626,6 +725,9 @@ HNManagedDeviceArbiter::getDeviceListCopy( std::vector< HNMDARecord > &deviceLis
 HNMDL_RESULT_T 
 HNManagedDeviceArbiter::lookupConnectionInfo( std::string crc32ID, HMDAR_ADDRTYPE_T preferredType, HNMDARAddress &connInfo )
 {
+    // Scope lock
+    std::lock_guard<std::mutex> guard( m_mapMutex );
+
     // See if we have a record for the device
     std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
 
@@ -672,10 +774,14 @@ HNManagedDeviceArbiter::start()
 void
 HNManagedDeviceArbiter::setNextMonitorState( HNMDARecord &device, HNMDR_MGMT_STATE_T nextState, uint minValue )
 {
+    device.lockForUpdate();
+
     device.setManagementState( nextState );
 
     if( minValue < m_monitorWaitTime )
         m_monitorWaitTime = minValue;
+
+    device.unlockForUpdate();
 }
 
 void 
@@ -696,22 +802,25 @@ HNManagedDeviceArbiter::runMonitoringLoop()
         // Walk through known devices and take any pending actions
         for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
         {
-            std::cout << "  Device - crc32: " << it->second.getCRC32ID() << "  type: " << it->second.getDeviceType() << "   state: " <<  it->second.getManagementStateStr() << std::endl;
+            std::cout << "  Device - crc32: " << it->second.getCRC32ID() << "  type: " << it->second.getDeviceType() << "   state: " <<  it->second.getManagementStateStr() << "  ostate: " << it->second.getOwnershipStateStr() << std::endl;
 
             switch( it->second.getManagementState() )
             {
                 // This record represents myself, the management node, just halt in this state
                 case HNMDR_MGMT_STATE_SELF:
+                    it->second.setOwnershipState( HNMDR_OWNER_STATE_MINE );
                     setNextMonitorState( it->second, HNMDR_MGMT_STATE_SELF, 10 );
                 break;
 
                 // Added via Avahi Discovery
                 case HNMDR_MGMT_STATE_DISCOVERED:
+                    it->second.setOwnershipState( HNMDR_OWNER_STATE_UNKNOWN );
                     setNextMonitorState( it->second, HNMDR_MGMT_STATE_OPT_INFO, 0 );
                 break;
 
-                // Added from config file, prior association
+                // Added from local record of owned devices (from prior association )
                 case HNMDR_MGMT_STATE_RECOVERED:
+                    it->second.setOwnershipState( HNMDR_OWNER_STATE_MINE );
                     setNextMonitorState( it->second, HNMDR_MGMT_STATE_OPT_INFO, 0 );
                 break;
 
@@ -731,16 +840,29 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                         break;
                     }
                     
-                    if( it->second.isOwnedByMe( m_selfCRC32ID ) )
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 0 );
-                    else if( it->second.isOwnedByOther() )
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OTHER_MGR, 0 );
-                    else if( it->second.isUnclaimed() && it->second.isAvailableToPair() )
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_UNCLAIMED, 0 );
-                    else if( it->second.isUnclaimed() )
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_NOT_AVAILABLE, 0 );
-                    else
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                    switch( it->second.getOwnershipState() )
+                    {
+                        case HNMDR_OWNER_STATE_MINE:
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 0 );
+                        break;
+
+                        case HNMDR_OWNER_STATE_OTHER:
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_OTHER_MGR, 0 );
+                        break;
+
+                        case HNMDR_OWNER_STATE_AVAILABLE:
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_UNCLAIMED, 0 );
+                        break;
+
+                        case HNMDR_OWNER_STATE_UNAVAILABLE:
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_NOT_AVAILABLE, 0 );
+                        break;
+
+                        case HNMDR_OWNER_STATE_NOTSET:
+                        case HNMDR_OWNER_STATE_UNKNOWN:
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                        break;
+                    }
                 break;
 
                 // Device is waiting to be claimed 
@@ -760,14 +882,6 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                     setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );
                 break;
 
-                // REST write to establish device management
-                case HNMDR_MGMT_STATE_OWNER_CLAIM:
-                break;
-
-                // REST write to reassert management configuration settings.
-                case HNMDR_MGMT_STATE_OWNER_AFFIRM:
-                break;
-
                 // Avahi notification that device is offline
                 case HNMDR_MGMT_STATE_DISAPPEARING:
                 break;
@@ -780,11 +894,62 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                 case HNMDR_MGMT_STATE_NOTSET:
                 default:
                 break;
+
+                // Perform the steps to execute a device command request
+                case HNMDR_MGMT_STATE_EXEC_CMD:
+                    if( executeDeviceMgmtCmd( it->second ) != HNMDL_RESULT_SUCCESS )
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                    else
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OWNER_INFO, 0 );
+                break;
             }
         }
     }
 
     std::cout << "HNManagedDeviceArbiter::monitor exit" << std::endl;
+}
+
+HNMDL_RESULT_T 
+HNManagedDeviceArbiter::setDeviceMgmtCmdFromJSON( std::string crc32ID, std::istream *bodyStream )
+{
+    // Scope lock
+    std::lock_guard<std::mutex> guard( m_mapMutex );
+
+    // Lookup the device
+    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+
+    if( it == mdrMap.end() )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    // Make sure a command isnt already running
+
+    // Setup the new command
+    return it->second.setMgmtCmdFromJSON( bodyStream );
+}
+
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::startDeviceMgmtCmd( std::string crc32ID )
+{
+    // Scope lock
+    std::lock_guard<std::mutex> guard( m_mapMutex );
+
+    // Lookup the device
+    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+
+    if( it == mdrMap.end() )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    // Validate the request
+
+    // Start the requests
+    setNextMonitorState( it->second, HNMDR_MGMT_STATE_EXEC_CMD, 0 );
+
+    return HNMDL_RESULT_SUCCESS;
 }
 
 void
@@ -810,15 +975,41 @@ HNManagedDeviceArbiter::killMonitoringLoop()
 }
 
 HNMDL_RESULT_T
+HNManagedDeviceArbiter::executeDeviceMgmtCmd( HNMDARecord &device )
+{
+    switch( device.getDeviceMgmtCmdRef().getType() )
+    {
+        case HNMDC_CMDTYPE_CLAIMDEV:
+            return sendDeviceClaimRequest( device );
+        break;
+
+        case HNMDC_CMDTYPE_RELEASEDEV:
+            return sendDeviceReleaseRequest( device );
+        break;
+
+        case HNMDC_CMDTYPE_SETDEVPARAMS:
+            return sendDeviceSetParameters( device );
+        break;
+    }
+
+    return HNMDL_RESULT_FAILURE;
+}
+
+HNMDL_RESULT_T
 HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
 {
     Poco::URI uri;
     HNMDARAddress dcInfo;
 
+    device.lockForUpdate();
+
     if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
     {
+        device.unlockForUpdate();
         return HNMDL_RESULT_FAILURE;
     }
+
+    device.unlockForUpdate();
 
     uri.setScheme( "http" );
     uri.setHost( dcInfo.getAddress() );
@@ -838,9 +1029,13 @@ HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
         return HNMDL_RESULT_FAILURE;
     }
 
+    device.lockForUpdate();
+
     std::string body;
     Poco::StreamCopier::copyToString( rs, body );
     std::cout << body << std::endl;
+
+    device.unlockForUpdate();
 
     return HNMDL_RESULT_SUCCESS;
 }
@@ -851,10 +1046,15 @@ HNManagedDeviceArbiter::updateDeviceOwnerInfo( HNMDARecord &device )
     Poco::URI uri;
     HNMDARAddress dcInfo;
 
+    device.lockForUpdate();
+
     if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
     {
+        device.unlockForUpdate();
         return HNMDL_RESULT_FAILURE;
     }
+
+    device.unlockForUpdate();
 
     uri.setScheme( "http" );
     uri.setHost( dcInfo.getAddress() );
@@ -874,10 +1074,209 @@ HNManagedDeviceArbiter::updateDeviceOwnerInfo( HNMDARecord &device )
         return HNMDL_RESULT_FAILURE;
     }
 
-    std::string body;
-    Poco::StreamCopier::copyToString( rs, body );
-    std::cout << body << std::endl;
+    // {
+    // "isAvailable" : true,
+    // "isOwned" : true,
+    // "owner_crc32ID" : "2c1b21da",
+    // "owner_hnodeID" : "54:cb:b3:de:e4:7f:11:ec:84:ac:d0:50:99:9c:b1:04"
+    // }
+    // Parse the json body of the request
+    try
+    {
+        device.lockForUpdate();
+
+        // Attempt to parse the json    
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( rs );
+
+        // Get a pointer to the root object
+        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
+
+        bool isAvailable = false;
+        if( jsRoot->has( "isAvailable" ) )
+        {
+            isAvailable = jsRoot->getValue<bool>( "isAvailable" );
+        }
+
+        bool isOwned     = false;
+        if( jsRoot->has( "isOwned" ) )
+        {
+            isOwned = jsRoot->getValue<bool>( "isOwned" );
+        }
+
+        HNodeID ownerHNID;
+        if( jsRoot->has( "owner_hnodeID" ) )
+        {
+            ownerHNID.setFromStr( jsRoot->getValue<std::string>( "owner_hnodeID" ) );
+        }
+
+        std::cout << "updateDeviceOwnerInfo - isOwned: " << isOwned << "  isAvail: " << isAvailable << "  ownerCRC32: " << ownerHNID.getCRC32AsHexStr() << std::endl;
+
+        // Determine how to update the device ownership information
+        if( isOwned == true )
+        {
+            // Save away the owners hnodeID
+            device.setOwnerID( ownerHNID );
+
+            std::cout << "updateDeviceOwnerInfo - ownerCompare - " << m_selfHnodeID.getCRC32() << " : " << ownerHNID.getCRC32() << std::endl;
+
+            // Check if we are the owner
+            if( m_selfHnodeID.getCRC32() == ownerHNID.getCRC32() )
+                device.setOwnershipState( HNMDR_OWNER_STATE_MINE );
+            else
+                device.setOwnershipState( HNMDR_OWNER_STATE_OTHER );
+        }
+        else if( isAvailable == true )
+        {
+            device.clearOwnerID();
+            device.setOwnershipState( HNMDR_OWNER_STATE_AVAILABLE );
+        }
+        else
+        {
+            device.clearOwnerID();
+            device.setOwnershipState( HNMDR_OWNER_STATE_UNAVAILABLE );
+        }
+
+        device.unlockForUpdate();
+    }
+    catch( Poco::Exception ex )
+    {
+        device.setOwnershipState( HNMDR_OWNER_STATE_UNKNOWN );
+        device.unlockForUpdate();
+        std::cout << "HNMDMgmtCmd::setFromJSON exception: " << ex.displayText() << std::endl;
+        // Request body was not understood
+        return HNMDL_RESULT_FAILURE;
+    }
 
     return HNMDL_RESULT_SUCCESS;
 }
 
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::sendDeviceClaimRequest( HNMDARecord &device )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+    pjs::Object jsRoot;
+
+    device.lockForUpdate();
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        device.unlockForUpdate();
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.unlockForUpdate();
+
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/owner" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_PUT, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    request.setContentType( "application/json" );
+
+    // Build the json payload to send
+    std::ostream& os = session.sendRequest( request );
+
+    std::string hnodeIDStr;
+    m_selfHnodeID.getStr( hnodeIDStr );
+    jsRoot.set( "owner_hnodeID", hnodeIDStr );
+
+    // Render into a json string.
+    try {
+        pjs::Stringifier::stringify( jsRoot, os );
+    } catch( Poco::Exception& ex ) {
+        std::cerr << ex.displayText() << std::endl;
+        return HNMDL_RESULT_FAILURE;
+    }
+ 
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << response.getStatus() << " " << response.getReason() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::sendDeviceReleaseRequest( HNMDARecord &device )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+
+    device.lockForUpdate();
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        device.unlockForUpdate();
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.unlockForUpdate();
+
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/owner" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_DELETE, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    session.sendRequest( request );
+ 
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << response.getStatus() << " " << response.getReason() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::sendDeviceSetParameters( HNMDARecord &device )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+
+    device.lockForUpdate();
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        device.unlockForUpdate();
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.unlockForUpdate();
+
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/info" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_PUT, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    session.sendRequest( request );
+ 
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << response.getStatus() << " " << response.getReason() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
