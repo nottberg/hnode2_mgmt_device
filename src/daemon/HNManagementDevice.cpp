@@ -1187,7 +1187,7 @@ const std::string g_HNode2ProxyMgmtAPI = R"(
       },
       "/hnode2/mgmt/device-inventory/{devCRC32ID}/command": {
         "post": {
-          "summary": "Request a change to device configuration.",
+          "summary": "Request a change to device management state.",
           "operationId": "postDeviceMgmtCommand",
           "responses": {
             "200": {

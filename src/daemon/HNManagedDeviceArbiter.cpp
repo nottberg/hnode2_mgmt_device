@@ -59,7 +59,7 @@ HNMDMgmtCmd::getTypeAsStr()
     else if( HNMDC_CMDTYPE_RELEASEDEV == m_cmdType )
         return "release";
     else if( HNMDC_CMDTYPE_SETDEVPARAMS == m_cmdType )
-        return "set_device_parameters";
+        return "update_device_fields";
     else if( HNMDC_CMDTYPE_NOTSET == m_cmdType )
         return "notset";
 
@@ -79,7 +79,7 @@ HNMDMgmtCmd::setTypeFromStr( std::string value )
         m_cmdType = HNMDC_CMDTYPE_RELEASEDEV;
         return false;
     }
-    else if( "set_device_parameters" == value )
+    else if( "update_device_fields" == value )
     {
         m_cmdType = HNMDC_CMDTYPE_SETDEVPARAMS;
         return false;
@@ -94,6 +94,12 @@ HNMDMgmtCmd::setName( std::string value )
 {
     m_name = value;
     m_fieldMask |= HNMDC_FLDMASK_NAME;
+}
+
+std::string
+HNMDMgmtCmd::getName()
+{
+    return m_name;
 }
 
 uint
@@ -142,6 +148,27 @@ HNMDMgmtCmd::setFromJSON( std::istream *bodyStream )
 
     // Done
     return HNMDL_RESULT_SUCCESS;
+}
+
+void
+HNMDMgmtCmd::getUpdateFieldsJSON( std::ostream &os )
+{
+    pjs::Object jsRoot;
+
+    if( m_fieldMask == HNMDC_FLDMASK_NONE )
+        return;
+
+    if( m_fieldMask & HNMDC_FLDMASK_NAME )
+    {
+        jsRoot.set( "name", getName() );
+    }
+
+    // Render into a json string.
+    try {
+        pjs::Stringifier::stringify( jsRoot, os );
+    } catch( Poco::Exception& ex ) {
+        std::cerr << ex.displayText() << std::endl;
+    }
 }
 
 HNMDARAddress::HNMDARAddress()
@@ -328,11 +355,12 @@ HNMDARecord::HNMDARecord( const HNMDARecord &srcObj )
     m_mgmtState   = srcObj.m_mgmtState;
     m_ownerState  = srcObj.m_ownerState;
 
-    discID       = srcObj.discID;
-    hnodeID      = srcObj.hnodeID;
-    devType      = srcObj.devType;
-    devVersion   = srcObj.devVersion;
-    name         = srcObj.name;
+    m_discID       = srcObj.m_discID;
+    m_hnodeID      = srcObj.m_hnodeID;
+    m_devType      = srcObj.m_devType;
+    m_devVersion   = srcObj.m_devVersion;
+    m_instance     = srcObj.m_instance;
+    m_name         = srcObj.m_name;
 
     m_addrList   = srcObj.m_addrList;
 
@@ -447,31 +475,37 @@ HNMDARecord::getOwnershipStateStr()
 void 
 HNMDARecord::setDiscoveryID( std::string value )
 {
-    discID = value;
+    m_discID = value;
 }
 
 void 
 HNMDARecord::setDeviceType( std::string value )
 {
-    devType = value;
+    m_devType = value;
 }
 
 void 
 HNMDARecord::setDeviceVersion( std::string value )
 {
-    devVersion = value;
+    m_devVersion = value;
 }
 
 void 
 HNMDARecord::setHNodeIDFromStr( std::string value )
 {
-    hnodeID.setFromStr( value );
+    m_hnodeID.setFromStr( value );
+}
+
+void 
+HNMDARecord::setInstance( std::string value )
+{
+    m_instance = value;
 }
 
 void 
 HNMDARecord::setName( std::string value )
 {
-    name = value;
+    m_name = value;
 }
 
 void 
@@ -518,39 +552,45 @@ HNMDARecord::getAddressList( std::vector< HNMDARAddress > &addrList )
 std::string 
 HNMDARecord::getDiscoveryID()
 {
-    return discID;
+    return m_discID;
 }
 
 std::string 
 HNMDARecord::getDeviceType()
 {
-    return devType;
+    return m_devType;
 }
 
 std::string 
 HNMDARecord::getDeviceVersion()
 {
-    return devVersion;
+    return m_devVersion;
 }
 
 std::string 
 HNMDARecord::getHNodeIDStr()
 {
     std::string rtnStr;
-    hnodeID.getStr( rtnStr );
+    m_hnodeID.getStr( rtnStr );
     return rtnStr;
+}
+
+std::string 
+HNMDARecord::getInstance()
+{
+    return m_instance;
 }
 
 std::string 
 HNMDARecord::getName()
 {
-    return name;
+    return m_name;
 }
 
 std::string 
 HNMDARecord::getCRC32ID()
 {
-    return hnodeID.getCRC32AsHexStr();
+    return m_hnodeID.getCRC32AsHexStr();
 }
 
 HNMDL_RESULT_T 
@@ -603,7 +643,7 @@ HNMDARecord::getDeviceMgmtCmdRef()
 void 
 HNMDARecord::debugPrint( uint offset )
 {
-    printf( "%*.*s%s  %s\n", offset, offset, " ", hnodeID.getCRC32AsHexStr().c_str(), getManagementStateStr().c_str() );
+    printf( "%*.*s%s  %s\n", offset, offset, " ", m_hnodeID.getCRC32AsHexStr().c_str(), getManagementStateStr().c_str() );
  
     offset += 2;
     printf( "%*.*sname: %s\n", offset, offset, " ", getName().c_str() );
@@ -900,7 +940,7 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                     if( executeDeviceMgmtCmd( it->second ) != HNMDL_RESULT_SUCCESS )
                         setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
                     else
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OWNER_INFO, 0 );
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OPT_INFO, 2 );
                 break;
             }
         }
@@ -1028,14 +1068,86 @@ HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
     {
         return HNMDL_RESULT_FAILURE;
     }
+        
+    // Track any updates
+    bool changed = false;
 
-    device.lockForUpdate();
+    // {
+    //   "crc32ID" : "4900fb4e",
+    //   "deviceType" : "hnode2-irrigation-device",
+    //   "hnodeID" : "29:72:e2:ae:db:90:11:ec:89:a1:b8:27:eb:52:da:55",
+    //   "instance" : "default",
+    //   "name" : "InitialName",
+    //   "version" : "2.0.0"
+    // }
+    // Parse the json body of the request
+    try
+    {
+        device.lockForUpdate();
 
-    std::string body;
-    Poco::StreamCopier::copyToString( rs, body );
-    std::cout << body << std::endl;
+        // Attempt to parse the json    
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( rs );
 
-    device.unlockForUpdate();
+        // Get a pointer to the root object
+        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
+
+        if( jsRoot->has( "deviceType" ) )
+        {
+            std::string dtype = jsRoot->getValue<std::string>( "deviceType" );
+            if( device.getDeviceType() != dtype )
+            {   
+                changed = true;
+                device.setDeviceType( dtype );
+            }
+        }
+
+        if( jsRoot->has( "instance" ) )
+        {
+            std::string inst = jsRoot->getValue<std::string>( "instance" );
+            if( device.getInstance() != inst )
+            {   
+                changed = true;
+                device.setInstance( inst );
+            }
+        }
+
+        if( jsRoot->has( "name" ) )
+        {
+            std::string name = jsRoot->getValue<std::string>( "name" );
+            std::cout << "Device Info returned name: " << name << std::endl;
+            if( device.getName() != name )
+            {   
+                changed = true;
+                device.setName( name );
+            }
+        }
+
+        if( jsRoot->has( "version" ) )
+        {
+            std::string version = jsRoot->getValue<std::string>( "version" );
+            if( device.getDeviceVersion() != version )
+            {   
+                changed = true;
+                device.setDeviceVersion( version );
+            }
+        }
+
+        device.unlockForUpdate();
+    }
+    catch( Poco::Exception ex )
+    {
+        device.setOwnershipState( HNMDR_OWNER_STATE_UNKNOWN );
+        device.unlockForUpdate();
+        std::cout << "HNMDMgmtCmd::setFromJSON exception: " << ex.displayText() << std::endl;
+        // Request body was not understood
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    if( changed == true )
+    {
+        std::cout << "Device values changed." << std::endl;
+    }
 
     return HNMDL_RESULT_SUCCESS;
 }
@@ -1268,7 +1380,9 @@ HNManagedDeviceArbiter::sendDeviceSetParameters( HNMDARecord &device )
     pns::HTTPRequest request( pns::HTTPRequest::HTTP_PUT, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
     pns::HTTPResponse response;
 
-    session.sendRequest( request );
+    // Format the update parameters
+    std::ostream &os = session.sendRequest( request );
+    device.getDeviceMgmtCmdRef().getUpdateFieldsJSON( os );
  
     std::istream& rs = session.receiveResponse( response );
     std::cout << response.getStatus() << " " << response.getReason() << std::endl;

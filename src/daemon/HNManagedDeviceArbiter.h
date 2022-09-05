@@ -61,6 +61,8 @@ class HNMDMgmtCmd
         void setExecState( HNMDC_EXEC_STATE_T value );
         HNMDC_EXEC_STATE_T getExecState();
 
+        void getUpdateFieldsJSON( std::ostream &os );
+
     private:
         HNMDC_EXEC_STATE_T m_execState;
 
@@ -143,11 +145,12 @@ class HNMDARecord
         HNMDR_MGMT_STATE_T   m_mgmtState;
         HNMDR_OWNER_STATE_T  m_ownerState;
 
-        std::string discID;
-        HNodeID     hnodeID;
-        std::string devType;
-        std::string devVersion;
-        std::string name;
+        std::string m_discID;
+        HNodeID     m_hnodeID;
+        std::string m_devType;
+        std::string m_devVersion;
+        std::string m_instance;
+        std::string m_name;
 
         std::vector< HNMDARAddress > m_addrList;
 
@@ -173,6 +176,7 @@ class HNMDARecord
         void setDeviceType( std::string value );
         void setDeviceVersion( std::string value );
         void setHNodeIDFromStr( std::string value );
+        void setInstance( std::string value );
         void setName( std::string value );
 
         void addAddressInfo( std::string dnsName, std::string address, uint16_t port );
@@ -190,6 +194,7 @@ class HNMDARecord
         std::string getDeviceType();
         std::string getDeviceVersion();
         std::string getHNodeIDStr();
+        std::string getInstance();
         std::string getName();
         std::string getCRC32ID();
 
