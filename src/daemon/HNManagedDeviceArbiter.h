@@ -112,21 +112,52 @@ class HNMDARAddress
         void debugPrint( uint offset );
 };
 
+class HNMDServiceEndpoint
+{
+    public:
+        HNMDServiceEndpoint();
+       ~HNMDServiceEndpoint();
+
+        void clear();
+
+        void setType( std::string type );
+        std::string getType();
+
+        void setVersion( std::string version );
+        std::string getVersion();
+
+        void setRootURIFromStr( std::string uri );
+        std::string getRootURIAsStr();
+
+        void setVisited( bool value );
+        bool getVisited();
+
+    private:
+        std::string m_type;
+        std::string m_version;
+        std::string m_rootURI;
+
+        bool m_visited;
+};
+
 typedef enum HNManagedDeviceRecordManagementStateEnum
 {
-    HNMDR_MGMT_STATE_NOTSET,        // Default value
-    HNMDR_MGMT_STATE_DISCOVERED,    // Added via Avahi Discovery
-    HNMDR_MGMT_STATE_RECOVERED,     // Added from config file, prior association
-    HNMDR_MGMT_STATE_SELF,          // This record is for myself - the management device itself
-    HNMDR_MGMT_STATE_OPT_INFO,      // REST read to aquire basic operating info
-    HNMDR_MGMT_STATE_OWNER_INFO,    // REST read for current ownership
-    HNMDR_MGMT_STATE_UNCLAIMED,     // Device is waiting to be claimed 
-    HNMDR_MGMT_STATE_NOT_AVAILABLE, // Device is not currently owned, but not available for claiming 
-    HNMDR_MGMT_STATE_OTHER_MGR,     // Device is currently owner by other manager
-    HNMDR_MGMT_STATE_ACTIVE,        // Device is active, responding to period health checks  
-    HNMDR_MGMT_STATE_DISAPPEARING,  // Avahi notification that device is offline
-    HNMDR_MGMT_STATE_OFFLINE,       // Recent attempts to contact device have been unsuccessful
-    HNMDR_MGMT_STATE_EXEC_CMD       // Execute a command to the device
+    HNMDR_MGMT_STATE_NOTSET,           // Default value
+    HNMDR_MGMT_STATE_DISCOVERED,       // Added via Avahi Discovery
+    HNMDR_MGMT_STATE_RECOVERED,        // Added from config file, prior association
+    HNMDR_MGMT_STATE_SELF,             // This record is for myself - the management device itself
+    HNMDR_MGMT_STATE_OPT_INFO,         // REST read to aquire basic operating info
+    HNMDR_MGMT_STATE_OWNER_INFO,       // REST read for current ownership
+    HNMDR_MGMT_STATE_SRV_PROVIDE_INFO, // REST read for services provided
+    HNMDR_MGMT_STATE_SRV_MAPPING_INFO, // REST read for services desired and current mappings
+    HNMDR_MGMT_STATE_SRV_MAP_UPDATE,   // REST put to update desired service mappings
+    HNMDR_MGMT_STATE_UNCLAIMED,        // Device is waiting to be claimed 
+    HNMDR_MGMT_STATE_NOT_AVAILABLE,    // Device is not currently owned, but not available for claiming 
+    HNMDR_MGMT_STATE_OTHER_MGR,        // Device is currently owned by other manager
+    HNMDR_MGMT_STATE_ACTIVE,           // Device is active, responding to period health checks  
+    HNMDR_MGMT_STATE_DISAPPEARING,     // Avahi notification that device is offline
+    HNMDR_MGMT_STATE_OFFLINE,          // Recent attempts to contact device have been unsuccessful
+    HNMDR_MGMT_STATE_EXEC_CMD          // Execute a command to the device
 }HNMDR_MGMT_STATE_T;
 
 typedef enum HNManagedDeviceRecordOwnerStateEnum
@@ -138,6 +169,19 @@ typedef enum HNManagedDeviceRecordOwnerStateEnum
     HNMDR_OWNER_STATE_AVAILABLE,
     HNMDR_OWNER_STATE_UNAVAILABLE
 }HNMDR_OWNER_STATE_T;
+
+#if 0
+// Flags for desired services
+typedef enum HNManagedDeviceRecordDesiredServicesEnum
+{
+    HNMDR_DSERV_NOTSET   = 0x00000000,
+    HNMDR_DSERV_HEALTH   = 0x00000001,
+    HNMDR_DSERV_EVENT    = 0x00000002,
+    HNMDR_DSERV_LOGGING  = 0x00000004,
+    HNMDR_DSERV_DATA     = 0x00000008,
+    HNMDR_DSERV_KEYVALUE = 0x00000010
+}HNMDR_DSERV_T;
+#endif
 
 class HNMDARecord
 {
@@ -157,6 +201,16 @@ class HNMDARecord
         HNodeID     m_ownerHNodeID;
 
         HNMDMgmtCmd m_mgmtCmd;
+
+        // A map of provided service endpoints
+        std::map< std::string, HNMDServiceEndpoint > m_srvMapProvided;
+
+        // A map of desired service endpoints, and current mappings 
+        std::map< std::string, HNMDServiceEndpoint > m_srvMapDesired;
+
+        // Flags to indicate which cluster services
+        // the device desires to use.
+        //HNMDR_DSERV_T m_desiredServiceFlags;
 
         // A mutex for guarding record modifications.
         std::mutex *m_deviceMutex;
@@ -183,6 +237,22 @@ class HNMDARecord
 
         void setOwnerID( HNodeID &ownerID );
         void clearOwnerID();
+
+        void startSrvProviderUpdates();
+        void abandonSrvProviderUpdates();
+        bool completeSrvProviderUpdates();
+        HNMDServiceEndpoint& updateSrvProvider( std::string srvType, bool &added );
+
+        void getSrvProviderTSList( std::vector< std::string > &srvTypesList );
+
+        void startSrvMappingUpdates();
+        void abandonSrvMappingUpdates();
+        bool completeSrvMappingUpdates();
+        HNMDServiceEndpoint& updateSrvMapping( std::string srvType, bool &added );
+
+        void getSrvMappingTSList( std::vector< std::string > &srvTypesList );
+
+        //void setDesiredServices( HNMDR_DSERV_T newFlags );
 
         HNMDR_MGMT_STATE_T  getManagementState();
         std::string getManagementStateStr();
@@ -211,6 +281,40 @@ class HNMDARecord
         void debugPrint( uint offset );
 };
 
+// Classes for reporting service info
+class HNMDServiceDevRef
+{
+    public:
+        HNMDServiceDevRef();
+       ~HNMDServiceDevRef();
+
+        void setDevName( std::string value );
+        std::string getDevName();
+
+        void setDevCRC32ID( std::string value );
+        std::string getDevCRC32ID();
+
+    private:
+        std::string m_name;
+        std::string m_crc32ID;
+};
+
+class HNMDServiceInfo
+{
+    public:
+        HNMDServiceInfo();
+       ~HNMDServiceInfo();
+
+        void setSrvType( std::string value );
+        std::string getSrvType();
+
+        std::vector< HNMDServiceDevRef >& getDeviceListRef();
+
+    private:
+        std::string m_srvType;
+        std::vector< HNMDServiceDevRef > m_devRefList;
+};
+
 class HNManagedDeviceArbiter
 {
     private:
@@ -222,6 +326,12 @@ class HNManagedDeviceArbiter
 
         // A map of known hnode2 devices
         std::map< std::string, HNMDARecord > mdrMap;
+
+        // A map of service providers
+        std::map< std::string, std::vector< HNMDARecord* > > m_providerMap;
+
+        // A map of service mappings
+        std::map< std::string, std::vector< HNMDARecord* > > m_servicesMap;
 
         // The thread helper
         void *thelp;
@@ -238,8 +348,13 @@ class HNManagedDeviceArbiter
         HNMDL_RESULT_T sendDeviceClaimRequest( HNMDARecord &device );
         HNMDL_RESULT_T sendDeviceReleaseRequest( HNMDARecord &device );
         HNMDL_RESULT_T sendDeviceSetParameters( HNMDARecord &device );
+        HNMDL_RESULT_T updateDeviceServicesProvideInfo( HNMDARecord &device );
+        HNMDL_RESULT_T updateDeviceServicesMappingInfo( HNMDARecord &device );
 
         HNMDL_RESULT_T executeDeviceMgmtCmd( HNMDARecord &device );
+
+        void rebuildSrvProviderMap();
+        void rebuildSrvMappings();
 
     protected:
         void runMonitoringLoop();
@@ -267,6 +382,10 @@ class HNManagedDeviceArbiter
         HNMDL_RESULT_T setDeviceMgmtCmdFromJSON( std::string crc32ID, std::istream *bodyStream );
 
         HNMDL_RESULT_T startDeviceMgmtCmd( std::string crc32ID );
+
+        void buildSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList );
+
+        void buildSrvMappingInfoList( std::vector< HNMDServiceInfo > &srvList );
 
         void debugPrint();
 

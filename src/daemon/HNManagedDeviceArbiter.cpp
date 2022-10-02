@@ -310,6 +310,72 @@ HNMDARAddress::debugPrint( uint offset )
     printf( "%*.*stype: %s  address: %s  port: %u  dnsName: %s\n", offset, offset, " ", getTypeAsStr().c_str(), m_address.c_str(), m_port, m_dnsName.c_str() );
 }
 
+
+HNMDServiceEndpoint::HNMDServiceEndpoint()
+{
+    m_visited = false;
+}
+
+HNMDServiceEndpoint::~HNMDServiceEndpoint()
+{
+
+}
+
+void
+HNMDServiceEndpoint::clear()
+{
+    m_rootURI.clear();
+}
+
+void
+HNMDServiceEndpoint::setType( std::string type )
+{
+    m_type = type;
+}
+
+std::string
+HNMDServiceEndpoint::getType()
+{
+    return m_type;
+}
+
+void
+HNMDServiceEndpoint::setVersion( std::string version )
+{
+    m_version = version;
+}
+
+std::string
+HNMDServiceEndpoint::getVersion()
+{
+    return m_version;
+}
+
+void
+HNMDServiceEndpoint::setRootURIFromStr( std::string uri )
+{
+    std::cout << "HNMDServiceEndpoint::setRootURIFromStr - uri: " << uri << std::endl;
+    m_rootURI = uri;
+}
+
+std::string
+HNMDServiceEndpoint::getRootURIAsStr()
+{
+    return m_rootURI;
+}
+
+void
+HNMDServiceEndpoint::setVisited( bool value )
+{
+    m_visited = value;
+}
+
+bool
+HNMDServiceEndpoint::getVisited()
+{
+    return m_visited;
+}
+
 // Helper class for running HNManagedDeviceArbiter 
 // monitoring loop as an independent thread
 class HNMDARunner : public Poco::Runnable
@@ -429,6 +495,12 @@ HNMDARecord::getManagementStateStr()
         return "OPT_INFO";
     else if( HNMDR_MGMT_STATE_OWNER_INFO == m_mgmtState )
         return "OWNER_INFO";
+    else if( HNMDR_MGMT_STATE_SRV_PROVIDE_INFO == m_mgmtState )
+        return "SRV_PROVIDE_INFO";
+    else if( HNMDR_MGMT_STATE_SRV_MAPPING_INFO == m_mgmtState )
+        return "SRV_MAPPING_INFO";
+    else if( HNMDR_MGMT_STATE_SRV_MAP_UPDATE == m_mgmtState )
+        return "SRV_MAP_UPDATE";
     else if( HNMDR_MGMT_STATE_UNCLAIMED == m_mgmtState )
         return "UNCLAIMED";
     else if( HNMDR_MGMT_STATE_OTHER_MGR == m_mgmtState )
@@ -640,6 +712,190 @@ HNMDARecord::getDeviceMgmtCmdRef()
     return m_mgmtCmd;
 }
 
+void
+HNMDARecord::startSrvProviderUpdates()
+{
+    std::cout << "startSrvProviderUpdates: " << m_srvMapProvided.size() << std::endl;
+
+    // Go through each service provider and mark as not visited
+    std::map< std::string, HNMDServiceEndpoint >::iterator it;
+    for( it = m_srvMapProvided.begin(); it != m_srvMapProvided.end(); it++ )
+    {
+        it->second.setVisited( false );
+    }
+}
+
+HNMDServiceEndpoint&
+HNMDARecord::updateSrvProvider( std::string srvType, bool &added )
+{
+    std::cout << "updateSrvProvider - size: " << m_srvMapProvided.size() << "  type: " << srvType << std::endl;
+
+    added = false;
+
+    // Check if the record already exists.
+    std::map< std::string, HNMDServiceEndpoint>::iterator it = m_srvMapProvided.find( srvType );
+
+    // If it does exist, return the existing record
+    if( it != m_srvMapProvided.end() )
+    {
+        // Mark the record as being visited
+        // so that the map can be cleaned up
+        // at the end if a service goes away
+        it->second.setVisited( true );
+
+        // Return the reference
+        return it->second;
+    }
+
+    added = true;
+
+    // The record didn't exist before so create a new one.
+    HNMDServiceEndpoint tmpEP;
+
+    tmpEP.setType( srvType );
+    tmpEP.setVisited(true);
+
+    std::pair< std::map<std::string, HNMDServiceEndpoint>::iterator, bool > rstPair = 
+        m_srvMapProvided.insert( std::pair< std::string, HNMDServiceEndpoint >( srvType, tmpEP ) );
+
+    return rstPair.first->second;
+}
+
+void
+HNMDARecord::abandonSrvProviderUpdates()
+{
+    // The update operation encountered an exception, clean up if necessary
+}
+
+bool
+HNMDARecord::completeSrvProviderUpdates()
+{
+    bool changed = false;
+
+    std::cout << "completeSrvProviderUpdates: " << m_srvMapProvided.size() << std::endl;
+
+    // Go through each service provider, if it wasn't visited then get rid of it.
+    std::map< std::string, HNMDServiceEndpoint >::iterator it;
+    for( it = m_srvMapProvided.begin(); it != m_srvMapProvided.end(); )
+    {
+        std::cout << "completeSrvProviderUpdates - type: " << it->first << "  visited: " << it->second.getVisited() << std::endl;
+
+        if( it->second.getVisited() == false )
+        {
+            changed = true;
+            m_srvMapProvided.erase( it++ );
+        }
+        else
+            it++;
+    }
+
+    return changed;
+}
+
+void
+HNMDARecord::getSrvProviderTSList( std::vector< std::string > &srvTypesList )
+{
+    srvTypesList.clear();
+
+    std::cout << "getSrvProviderTSList - size: " << m_srvMapProvided.size() << std::endl;
+    
+    std::map< std::string, HNMDServiceEndpoint >::iterator it;
+    for( it = m_srvMapProvided.begin(); it != m_srvMapProvided.end(); it++ )
+        srvTypesList.push_back( it->second.getType() );
+}
+
+void
+HNMDARecord::startSrvMappingUpdates()
+{
+    std::cout << "startSrvMappingUpdates: " << m_srvMapDesired.size() << std::endl;
+
+    // Go through each service mapping and mark as not visited
+    std::map< std::string, HNMDServiceEndpoint >::iterator it;
+    for( it = m_srvMapDesired.begin(); it != m_srvMapDesired.end(); it++ )
+    {
+        it->second.setVisited( false );
+    }
+}
+
+HNMDServiceEndpoint&
+HNMDARecord::updateSrvMapping( std::string srvType, bool &added )
+{
+    std::cout << "updateSrvMapping - size: " << m_srvMapDesired.size() << "  type: " << srvType << std::endl;
+
+    added = false;
+
+    // Check if the record already exists.
+    std::map< std::string, HNMDServiceEndpoint>::iterator it = m_srvMapDesired.find( srvType );
+
+    // If it does exist, return the existing record
+    if( it != m_srvMapDesired.end() )
+    {
+        // Mark the record as being visited
+        // so that the map can be cleaned up
+        // at the end if a service goes away
+        it->second.setVisited( true );
+
+        // Return the reference
+        return it->second;
+    }
+
+    added = true;
+    
+    // The record didn't exist before so create a new one.
+    HNMDServiceEndpoint tmpEP;
+
+    tmpEP.setType( srvType );
+    tmpEP.setVisited(true);
+
+    std::pair< std::map<std::string, HNMDServiceEndpoint>::iterator, bool > rstPair = 
+        m_srvMapDesired.insert( std::pair< std::string, HNMDServiceEndpoint >( srvType, tmpEP ) );
+
+    return rstPair.first->second;
+}
+
+void
+HNMDARecord::abandonSrvMappingUpdates()
+{
+    // The update operation encountered an exception, clean up if necessary
+}
+
+bool
+HNMDARecord::completeSrvMappingUpdates()
+{
+    bool changed = false;
+
+    std::cout << "completeSrvMappingUpdates: " << m_srvMapDesired.size() << std::endl;
+
+    // Go through each service mapping, if it wasn't visited then get rid of it.
+    std::map< std::string, HNMDServiceEndpoint >::iterator it;
+    for( it = m_srvMapDesired.begin(); it != m_srvMapDesired.end(); )
+    {
+        std::cout << "completeSrvMappingUpdates - type: " << it->first << "  visited: " << it->second.getVisited() << std::endl;
+
+        if( it->second.getVisited() == false )
+        {
+            changed = true;
+            m_srvMapDesired.erase( it++ );
+        }
+        else
+            it++;
+    }
+
+    return changed;
+}
+
+void
+HNMDARecord::getSrvMappingTSList( std::vector< std::string > &srvTypesList )
+{
+    srvTypesList.clear();
+
+    std::cout << "getSrvMappingTSList - size: " << m_srvMapDesired.size() << std::endl;
+    
+    std::map< std::string, HNMDServiceEndpoint >::iterator it;
+    for( it = m_srvMapDesired.begin(); it != m_srvMapDesired.end(); it++ )
+        srvTypesList.push_back( it->second.getType() );
+}
+
 void 
 HNMDARecord::debugPrint( uint offset )
 {
@@ -655,6 +911,68 @@ HNMDARecord::debugPrint( uint offset )
     {
         it->debugPrint(offset);
     }
+}
+
+HNMDServiceDevRef::HNMDServiceDevRef()
+{
+
+}
+
+HNMDServiceDevRef::~HNMDServiceDevRef()
+{
+
+}
+
+void
+HNMDServiceDevRef::setDevName( std::string value )
+{
+    m_name = value;
+}
+
+std::string
+HNMDServiceDevRef::getDevName()
+{
+    return m_name;
+}
+
+void
+HNMDServiceDevRef::setDevCRC32ID( std::string value )
+{
+    m_crc32ID = value;
+}
+
+std::string
+HNMDServiceDevRef::getDevCRC32ID()
+{
+    return m_crc32ID;
+}
+
+HNMDServiceInfo::HNMDServiceInfo()
+{
+
+}
+
+HNMDServiceInfo::~HNMDServiceInfo()
+{
+
+}
+
+void
+HNMDServiceInfo::setSrvType( std::string value )
+{
+    m_srvType = value;
+}
+
+std::string 
+HNMDServiceInfo::getSrvType()
+{
+    return m_srvType;
+}
+
+std::vector< HNMDServiceDevRef >& 
+HNMDServiceInfo::getDeviceListRef()
+{
+    return m_devRefList;
 }
 
 HNManagedDeviceArbiter::HNManagedDeviceArbiter()
@@ -681,7 +999,23 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
     {
         // This is a new record
         if( record.getCRC32ID() == m_selfHnodeID.getCRC32AsHexStr() )
+        {
             record.setManagementState( HNMDR_MGMT_STATE_SELF );
+
+            // The health and logging sinks are both built into the management
+            // node itself.
+            // HNMDServiceEndpoint srvRec;
+            // HNMDARAddress addrInfo;
+
+            // if( record.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, addrInfo ) == HNMDL_RESULT_SUCCESS )
+            // {
+                //srvRec.setRootURIFromStr( addrInfo.getURL("http", "hnode2/mgmt/healthSink") );
+                //m_serviceMap.insert( std::pair<std::string, HNMDServiceEndpoint>("health", srvRec ));
+
+                //srvRec.setRootURIFromStr( addrInfo.getURL("http", "hnode2/mgmt/logSink") );
+                //m_serviceMap.insert( std::pair<std::string, HNMDServiceEndpoint>("logging", srvRec ));
+            // }
+        }
         else
             record.setManagementState( HNMDR_MGMT_STATE_DISCOVERED );
 
@@ -883,7 +1217,7 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                     switch( it->second.getOwnershipState() )
                     {
                         case HNMDR_OWNER_STATE_MINE:
-                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 0 );
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_SRV_PROVIDE_INFO, 0 );
                         break;
 
                         case HNMDR_OWNER_STATE_OTHER:
@@ -903,6 +1237,26 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                             setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
                         break;
                     }
+                break;
+
+                // REST read for services provided
+                case HNMDR_MGMT_STATE_SRV_PROVIDE_INFO:
+                    if( updateDeviceServicesProvideInfo( it->second ) != HNMDL_RESULT_SUCCESS )
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                    else
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_SRV_MAPPING_INFO, 0 );
+                break;
+
+                // REST read for desired services and current mappings
+                case HNMDR_MGMT_STATE_SRV_MAPPING_INFO:
+                    if( updateDeviceServicesMappingInfo( it->second ) != HNMDL_RESULT_SUCCESS )
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                    else
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 0 );
+                break;
+                
+                // REST put to update desired service mappings
+                case HNMDR_MGMT_STATE_SRV_MAP_UPDATE:
                 break;
 
                 // Device is waiting to be claimed 
@@ -1132,6 +1486,32 @@ HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
                 device.setDeviceVersion( version );
             }
         }
+
+#if 0
+        if( jsRoot->has( "desiredServices" ) )
+        {
+            uint newDServFlags = HNMDR_DSERV_NOTSET;
+            pjs::Array::Ptr jsSvcList = jsRoot->getArray( "desiredServices" );
+
+            for( uint index = 0; index < jsSvcList->size(); index++ )
+            {
+                std::string value = jsSvcList->getElement<std::string>( index );
+                std::cout << "Device Info - DServ: " << value << std::endl;
+                if( "health" == value )
+                    newDServFlags |= HNMDR_DSERV_HEALTH;
+                else if( "event" == value )
+                    newDServFlags |= HNMDR_DSERV_EVENT;
+                else if( "logging" == value )
+                    newDServFlags |= HNMDR_DSERV_LOGGING;
+                else if( "data" == value )
+                    newDServFlags |= HNMDR_DSERV_DATA;
+                else if( "key-value" == value )
+                    newDServFlags |= HNMDR_DSERV_KEYVALUE;
+            }
+            
+            device.setDesiredServices( (HNMDR_DSERV_T) newDServFlags );
+        }
+#endif
 
         device.unlockForUpdate();
     }
@@ -1393,4 +1773,428 @@ HNManagedDeviceArbiter::sendDeviceSetParameters( HNMDARecord &device )
     }
 
     return HNMDL_RESULT_SUCCESS;
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::updateDeviceServicesProvideInfo( HNMDARecord &device )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+
+    device.lockForUpdate();
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        device.unlockForUpdate();
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.unlockForUpdate();
+
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/services/provided" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_GET, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    session.sendRequest( request );
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << response.getStatus() << " " << response.getReason() << " " << response.getContentLength() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+        
+    // Track any updates
+    bool changed = false;
+
+    // [
+    //   {
+    //     "type" : "hnst-health-src",
+    //     "version" : "1.0.0",
+    //     "uri" : ""
+    //   }
+    // ]
+    // Parse the json body of the request
+    try
+    {
+        device.lockForUpdate();
+
+        // Attempt to parse the json    
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( rs );
+
+        // Note the start of potential service list updates
+        device.startSrvProviderUpdates();
+
+        // Get a pointer to the root object
+        pjs::Array::Ptr jsRoot = varRoot.extract< pjs::Array::Ptr >();
+
+        for( uint i = 0; i < jsRoot->size(); i++ )
+        {
+            pjs::Object::Ptr jsSrvObj = jsRoot->getObject( i );
+
+            if( jsSrvObj.isNull() )
+                continue;
+
+            if( jsSrvObj->has( "type" ) )
+            {
+                std::string stype = jsSrvObj->getValue<std::string>( "type" );
+
+                std::cout << "updateDeviceServicesProvideInfo - type: " << stype << std::endl;
+
+                // Get a record object reference for this service type.
+                // If it hasn't been seen before, a new record will be created.
+                bool added = false;
+                HNMDServiceEndpoint &srvRef = device.updateSrvProvider( stype, added );
+
+                if( added == true )
+                    changed = true;
+
+                if( jsSrvObj->has( "version" ) )
+                {
+                    std::string version = jsSrvObj->getValue<std::string>( "version" );
+                    if( srvRef.getVersion() != version )
+                    {
+                        srvRef.setVersion( version );
+                        changed = true;
+                    }
+                }
+
+                if( jsSrvObj->has( "uri" ) )
+                {
+                    std::string uri = jsSrvObj->getValue<std::string>( "uri" );
+                    if( srvRef.getRootURIAsStr() != uri )
+                    {
+                        srvRef.setRootURIFromStr( uri );
+                        changed = true;
+                    }
+                }
+
+            }
+            else
+            {
+                // Mandatory service type field missing, skip to next record
+                continue;
+            }
+            
+        }
+
+        // Done with updates to services provided list
+        if( device.completeSrvProviderUpdates() == true )
+            changed = true;
+
+        device.unlockForUpdate();
+
+    }
+    catch( Poco::Exception ex )
+    {
+        // Done with updates to services provided list
+        device.abandonSrvProviderUpdates();
+
+        device.unlockForUpdate();
+
+        std::cout << "HNMDMgmtCmd::updateDeviceServicesProvideInfo exception: " << ex.displayText() << std::endl;
+        // Request body was not understood
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    // If anything changed then update the by-service-type lookup maps
+    // in the arbiter as well.
+    if( changed == true )
+    {
+        std::cout << "Device list service providers changed." << std::endl;
+        rebuildSrvProviderMap();
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+void 
+HNManagedDeviceArbiter::rebuildSrvProviderMap()
+{
+    // Clear the old map since it will be rebuilt
+    m_providerMap.clear();
+
+    // Walk through each device
+    std::map< std::string, HNMDARecord >::iterator it;
+    for( it = mdrMap.begin(); it != mdrMap.end(); it++ )
+    {
+        // Get a list of provided endpoint type strings
+        std::vector< std::string > srvTypes;
+
+        std::cout << "rebuildSrvProviderMap - device: " << it->second.getCRC32ID() << std::endl;
+
+        it->second.getSrvProviderTSList( srvTypes );
+
+        std::cout << "rebuildSrvProviderMap - tscnt: " << srvTypes.size() << std::endl;
+
+        // Add this device to the srvProviderMap for each service it provides
+        for( std::vector< std::string >::iterator sit = srvTypes.begin(); sit != srvTypes.end(); sit++ )
+        {
+            std::cout << "rebuildSrvProviderMap - tsstr: " << *sit << std::endl;
+
+            std::map< std::string, std::vector< HNMDARecord* > >::iterator mit;
+            mit = m_providerMap.find( *sit );
+            
+            if( mit != m_providerMap.end() )
+            {
+                std::cout << "rebuildSrvProviderMap - add-new" << std::endl;
+                mit->second.push_back( &(it->second) );
+            }
+            else
+            {
+                std::cout << "rebuildSrvProviderMap - add-tail" << std::endl;
+                std::vector< HNMDARecord* > tmpList;
+                tmpList.push_back( &(it->second) );
+                m_providerMap.insert( std::pair< std::string, std::vector< HNMDARecord* > >( *sit, tmpList ) );
+            }
+        }    
+    }
+}
+
+void
+HNManagedDeviceArbiter::buildSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList )
+{
+    // Start with a clean slate
+    srvList.clear();
+
+    // Walk through each service
+    std::map< std::string, std::vector< HNMDARecord * > >::iterator it;
+    for( it = m_providerMap.begin(); it != m_providerMap.end(); it++ )
+    {
+        HNMDServiceInfo srvInfo;
+
+        srvInfo.setSrvType( it->first );
+
+        srvList.push_back( srvInfo );
+
+        for( std::vector< HNMDARecord * >::iterator dit = it->second.begin(); dit != it->second.end(); dit++ )
+        {
+            HNMDServiceDevRef devRef;
+
+            devRef.setDevName( (*dit)->getName() );
+            devRef.setDevCRC32ID( (*dit)->getCRC32ID() );
+
+            srvList.back().getDeviceListRef().push_back( devRef );
+        }
+    }
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::updateDeviceServicesMappingInfo( HNMDARecord &device )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+
+    device.lockForUpdate();
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        device.unlockForUpdate();
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.unlockForUpdate();
+
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/services/mappings" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_GET, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    session.sendRequest( request );
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << response.getStatus() << " " << response.getReason() << " " << response.getContentLength() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+        
+    // Track any updates
+    bool changed = false;
+
+    // [
+    //   {
+    //     "type" : "hnst-health-src",
+    //     "version" : "1.0.0",
+    //     "uri" : ""
+    //   }
+    // ]
+    // Parse the json body of the request
+    try
+    {
+        device.lockForUpdate();
+
+        // Attempt to parse the json    
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( rs );
+
+        // Note the start of potential service list updates
+        device.startSrvMappingUpdates();
+
+        // Get a pointer to the root object
+        pjs::Array::Ptr jsRoot = varRoot.extract< pjs::Array::Ptr >();
+
+        for( uint i = 0; i < jsRoot->size(); i++ )
+        {
+            pjs::Object::Ptr jsSrvObj = jsRoot->getObject( i );
+
+            if( jsSrvObj.isNull() )
+                continue;
+
+            if( jsSrvObj->has( "type" ) )
+            {
+                std::string stype = jsSrvObj->getValue<std::string>( "type" );
+
+                std::cout << "updateDeviceServicesMappingInfo - type: " << stype << std::endl;
+
+                // Get a record object reference for this service type.
+                // If it hasn't been seen before, a new record will be created.
+                bool added = false;
+                HNMDServiceEndpoint &srvRef = device.updateSrvMapping( stype, added );
+
+                if( added == true )
+                    changed = true;
+
+                if( jsSrvObj->has( "version" ) )
+                {
+                    std::string version = jsSrvObj->getValue<std::string>( "version" );
+                    if( srvRef.getVersion() != version )
+                    {
+                        srvRef.setVersion( version );
+                        changed = true;
+                    }
+                }
+
+                if( jsSrvObj->has( "uri" ) )
+                {
+                    std::string uri = jsSrvObj->getValue<std::string>( "uri" );
+                    if( srvRef.getRootURIAsStr() != uri )
+                    {
+                        srvRef.setRootURIFromStr( uri );
+                        changed = true;
+                    }
+                }
+
+            }
+            else
+            {
+                // Mandatory service type field missing, skip to next record
+                continue;
+            }
+            
+        }
+
+        // Done with updates to services provided list
+        if( device.completeSrvMappingUpdates() == true )
+            changed = true;
+
+        device.unlockForUpdate();
+
+    }
+    catch( Poco::Exception ex )
+    {
+        // Done with updates to services provided list
+        device.abandonSrvMappingUpdates();
+
+        device.unlockForUpdate();
+
+        std::cout << "HNMDMgmtCmd::updateDeviceServicesMappingInfo exception: " << ex.displayText() << std::endl;
+        // Request body was not understood
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    // If anything changed then update the by-service-type lookup maps
+    // in the arbiter as well.
+    if( changed == true )
+    {
+        std::cout << "Device list service mappings changed." << std::endl;
+        rebuildSrvMappings();
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+void 
+HNManagedDeviceArbiter::rebuildSrvMappings()
+{
+    // Clear the old map since it will be rebuilt
+    m_servicesMap.clear();
+    
+    // Walk through each device
+    std::map< std::string, HNMDARecord >::iterator it;
+    for( it = mdrMap.begin(); it != mdrMap.end(); it++ )
+    {
+        // Get a list of provided endpoint type strings
+        std::vector< std::string > srvTypes;
+
+        std::cout << "rebuildSrvMapping - device: " << it->second.getCRC32ID() << std::endl;
+
+        it->second.getSrvMappingTSList( srvTypes );
+
+        std::cout << "rebuildSrvMapping - tscnt: " << srvTypes.size() << std::endl;
+
+        // Add this device to the srvMappings for each service it provides
+        for( std::vector< std::string >::iterator sit = srvTypes.begin(); sit != srvTypes.end(); sit++ )
+        {
+            std::cout << "rebuildSrvMapping - tsstr: " << *sit << std::endl;
+
+            std::map< std::string, std::vector< HNMDARecord* > >::iterator mit;
+            mit = m_servicesMap.find( *sit );
+            
+            if( mit != m_servicesMap.end() )
+            {
+                std::cout << "rebuildSrvMapping - add-new" << std::endl;
+                mit->second.push_back( &(it->second) );
+            }
+            else
+            {
+                std::cout << "rebuildSrvMapping - add-tail" << std::endl;
+                std::vector< HNMDARecord* > tmpList;
+                tmpList.push_back( &(it->second) );
+                m_servicesMap.insert( std::pair< std::string, std::vector< HNMDARecord* > >( *sit, tmpList ) );
+            }
+        }    
+    }
+}
+
+void
+HNManagedDeviceArbiter::buildSrvMappingInfoList( std::vector< HNMDServiceInfo > &srvList )
+{
+    // Start with a clean slate
+    srvList.clear();
+
+    std::cout << "buildSrvMappingInfoList - size: " << m_servicesMap.size() << std::endl;
+
+    // Walk through each service
+    std::map< std::string, std::vector< HNMDARecord * > >::iterator it;
+    for( it = m_servicesMap.begin(); it != m_servicesMap.end(); it++ )
+    {
+        HNMDServiceInfo srvInfo;
+
+        srvInfo.setSrvType( it->first );
+
+        srvList.push_back( srvInfo );
+
+        std::cout << "buildSrvMappingInfoList - size2: " << it->second.size() << std::endl;
+
+        for( std::vector< HNMDARecord * >::iterator dit = it->second.begin(); dit != it->second.end(); dit++ )
+        {
+            HNMDServiceDevRef devRef;
+
+            devRef.setDevName( (*dit)->getName() );
+            devRef.setDevCRC32ID( (*dit)->getCRC32ID() );
+
+            srvList.back().getDeviceListRef().push_back( devRef );
+        }
+    }
 }

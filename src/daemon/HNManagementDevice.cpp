@@ -1051,6 +1051,73 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         reqRR->getRspMsg().setReason("OK");
         return;
     }
+    else if( "getDeviceServices" == opID )
+    {
+        std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
+        pjs::Object jsRoot;
+        pjs::Object jsProviderSet;
+        pjs::Object jsMappingSet;
+      //  pjs::Array jsUnclaimedArray;
+      //  pjs::Array jsOtherOwnerArray;
+      //  pjs::Array jsUnavailableArray;
+
+        std::vector< HNMDServiceInfo > srvInfoList;
+        m_arbiter.buildSrvProviderInfoList( srvInfoList );
+
+        for( std::vector< HNMDServiceInfo >::iterator sit = srvInfoList.begin(); sit != srvInfoList.end(); sit++ )
+        {
+            pjs::Object jsProvider;
+            pjs::Array  jsProviderArray;
+
+            for( std::vector< HNMDServiceDevRef >::iterator pit = sit->getDeviceListRef().begin(); pit != sit->getDeviceListRef().end(); pit++ )
+            {
+                jsProvider.set( "name", pit->getDevName() );
+                jsProvider.set( "devCRC32ID", pit->getDevCRC32ID() );
+              
+                jsProviderArray.add( jsProvider );
+            }
+
+            jsProviderSet.set( sit->getSrvType(), jsProviderArray );
+        }
+
+        m_arbiter.buildSrvMappingInfoList( srvInfoList );
+
+        for( std::vector< HNMDServiceInfo >::iterator sit = srvInfoList.begin(); sit != srvInfoList.end(); sit++ )
+        {
+            pjs::Object jsProvider;
+            pjs::Array  jsProviderArray;
+
+            for( std::vector< HNMDServiceDevRef >::iterator pit = sit->getDeviceListRef().begin(); pit != sit->getDeviceListRef().end(); pit++ )
+            {
+                jsProvider.set( "name", pit->getDevName() );
+                jsProvider.set( "devCRC32ID", pit->getDevCRC32ID() );
+              
+                jsProviderArray.add( jsProvider );
+            }
+
+            jsMappingSet.set( sit->getSrvType(), jsProviderArray );
+        }
+
+        // Report the owned, unclaimed, other-owner, and unavailable arrays
+        jsRoot.set( "providerSet", jsProviderSet );
+        jsRoot.set( "mappingSet", jsMappingSet );
+        //jsRoot.set( "unavailableDevices", jsUnavailableArray );
+
+        // Render into a json string.
+        try {
+            pjs::Stringifier::stringify( jsRoot, msg );
+        } catch( ... ) {
+            // Send back not implemented
+            reqRR->getRspMsg().configAsInternalServerError();
+            return;
+        }
+
+        reqRR->getRspMsg().finalizeLocalContent();
+        reqRR->getRspMsg().setContentType("application/json");
+        reqRR->getRspMsg().setStatusCode(200);
+        reqRR->getRspMsg().setReason("OK");
+        return;      
+    }
 
     // Send back not implemented
     reqRR->getRspMsg().configAsNotFound();
@@ -1205,7 +1272,28 @@ const std::string g_HNode2ProxyMgmtAPI = R"(
             }
           }
         }        
-      }        
+      },
+      "/hnode2/mgmt/device-services": {
+        "get": {
+          "summary": "Get device services provides, desires, and mapping info.",
+          "operationId": "getDeviceServices",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        }
+      }              
   }
 }
 )";
