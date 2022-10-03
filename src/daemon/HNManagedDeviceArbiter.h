@@ -281,6 +281,24 @@ class HNMDARecord
         void debugPrint( uint offset );
 };
 
+// Class for associating device and service
+class HNMDSrvRef
+{
+    public:
+        HNMDSrvRef();
+       ~HNMDSrvRef();
+
+        void setDevCRC32ID( std::string value );
+        void setSrvType( std::string value );
+
+        std::string getDevCRC32ID();
+        std::string getSrvType();
+
+    private:
+        std::string m_devCRC32ID;
+        std::string m_srvType;
+};
+
 // Classes for reporting service info
 class HNMDServiceDevRef
 {
@@ -325,13 +343,19 @@ class HNManagedDeviceArbiter
         std::mutex m_mapMutex;
 
         // A map of known hnode2 devices
-        std::map< std::string, HNMDARecord > mdrMap;
+        std::map< std::string, HNMDARecord > m_deviceMap;
 
         // A map of service providers
-        std::map< std::string, std::vector< HNMDARecord* > > m_providerMap;
+        std::map< std::string, std::vector< std::string > > m_providerMap;
 
         // A map of service mappings
-        std::map< std::string, std::vector< HNMDARecord* > > m_servicesMap;
+        std::map< std::string, std::vector< std::string > > m_servicesMap;
+
+        // Default service mappings
+        std::map< std::string, std::vector< HNMDSrvRef > > m_defaultMappings;
+
+        // Directed service mappings
+        std::map< HNMDSrvRef, HNMDSrvRef > m_directedMappings;
 
         // The thread helper
         void *thelp;

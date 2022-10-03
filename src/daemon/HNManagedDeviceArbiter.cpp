@@ -840,7 +840,7 @@ HNMDARecord::updateSrvMapping( std::string srvType, bool &added )
     }
 
     added = true;
-    
+
     // The record didn't exist before so create a new one.
     HNMDServiceEndpoint tmpEP;
 
@@ -911,6 +911,40 @@ HNMDARecord::debugPrint( uint offset )
     {
         it->debugPrint(offset);
     }
+}
+
+HNMDSrvRef::HNMDSrvRef()
+{
+
+}
+
+HNMDSrvRef::~HNMDSrvRef()
+{
+
+}
+
+void
+HNMDSrvRef::setDevCRC32ID( std::string value )
+{
+    m_devCRC32ID = value;
+}
+
+void
+HNMDSrvRef::setSrvType( std::string value )
+{
+    m_srvType = value;
+}
+
+std::string
+HNMDSrvRef::getDevCRC32ID()
+{
+    return m_devCRC32ID;
+}
+
+std::string
+HNMDSrvRef::getSrvType()
+{
+    return m_srvType;
 }
 
 HNMDServiceDevRef::HNMDServiceDevRef()
@@ -993,9 +1027,9 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
     // Check if the record is existing, or if this is a new discovery.
-    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( record.getCRC32ID() );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( record.getCRC32ID() );
 
-    if( it == mdrMap.end() )
+    if( it == m_deviceMap.end() )
     {
         // This is a new record
         if( record.getCRC32ID() == m_selfHnodeID.getCRC32AsHexStr() )
@@ -1019,7 +1053,7 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
         else
             record.setManagementState( HNMDR_MGMT_STATE_DISCOVERED );
 
-        mdrMap.insert( std::pair< std::string, HNMDARecord >( record.getCRC32ID(), record ) );
+        m_deviceMap.insert( std::pair< std::string, HNMDARecord >( record.getCRC32ID(), record ) );
     }
     else
     {
@@ -1037,9 +1071,9 @@ HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
     // Check if the record is existing, or if this is a new discovery.
-    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( record.getCRC32ID() );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( record.getCRC32ID() );
 
-    if( it != mdrMap.end() )
+    if( it != m_deviceMap.end() )
     {
         // This is a new record
         it->second.setManagementState( HNMDR_MGMT_STATE_DISAPPEARING );
@@ -1074,9 +1108,9 @@ HNManagedDeviceArbiter::getDeviceCopy( std::string crc32ID, HNMDARecord &device 
     // Scope lock
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
-    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( crc32ID );
 
-    if( it == mdrMap.end() )
+    if( it == m_deviceMap.end() )
         return HNMDL_RESULT_FAILURE;
 
     device = it->second;
@@ -1090,7 +1124,7 @@ HNManagedDeviceArbiter::getDeviceListCopy( std::vector< HNMDARecord > &deviceLis
     // Scope lock
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
-    for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
+    for( std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.begin(); it != m_deviceMap.end(); it++ )
     {    
         deviceList.push_back( it->second );
     }
@@ -1103,9 +1137,9 @@ HNManagedDeviceArbiter::lookupConnectionInfo( std::string crc32ID, HMDAR_ADDRTYP
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
     // See if we have a record for the device
-    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( crc32ID );
 
-    if( it == mdrMap.end() )
+    if( it == m_deviceMap.end() )
         return HNMDL_RESULT_FAILURE;
 
     return it->second.findPreferredConnection( preferredType, connInfo );
@@ -1116,7 +1150,7 @@ HNManagedDeviceArbiter::debugPrint()
 {
     printf( "=== Managed Device Arbiter ===\n" );
 
-    for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
+    for( std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.begin(); it != m_deviceMap.end(); it++ )
     {
         it->second.debugPrint( 2 );
     }
@@ -1174,7 +1208,7 @@ HNManagedDeviceArbiter::runMonitoringLoop()
         std::cout << "HNManagedDeviceArbiter::monitor wakeup" << std::endl;
 
         // Walk through known devices and take any pending actions
-        for( std::map< std::string, HNMDARecord >::iterator it = mdrMap.begin(); it != mdrMap.end(); it++ )
+        for( std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.begin(); it != m_deviceMap.end(); it++ )
         {
             std::cout << "  Device - crc32: " << it->second.getCRC32ID() << "  type: " << it->second.getDeviceType() << "   state: " <<  it->second.getManagementStateStr() << "  ostate: " << it->second.getOwnershipStateStr() << std::endl;
 
@@ -1310,9 +1344,9 @@ HNManagedDeviceArbiter::setDeviceMgmtCmdFromJSON( std::string crc32ID, std::istr
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
     // Lookup the device
-    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( crc32ID );
 
-    if( it == mdrMap.end() )
+    if( it == m_deviceMap.end() )
     {
         return HNMDL_RESULT_FAILURE;
     }
@@ -1331,9 +1365,9 @@ HNManagedDeviceArbiter::startDeviceMgmtCmd( std::string crc32ID )
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
     // Lookup the device
-    std::map< std::string, HNMDARecord >::iterator it = mdrMap.find( crc32ID );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( crc32ID );
 
-    if( it == mdrMap.end() )
+    if( it == m_deviceMap.end() )
     {
         return HNMDL_RESULT_FAILURE;
     }
@@ -1922,7 +1956,7 @@ HNManagedDeviceArbiter::rebuildSrvProviderMap()
 
     // Walk through each device
     std::map< std::string, HNMDARecord >::iterator it;
-    for( it = mdrMap.begin(); it != mdrMap.end(); it++ )
+    for( it = m_deviceMap.begin(); it != m_deviceMap.end(); it++ )
     {
         // Get a list of provided endpoint type strings
         std::vector< std::string > srvTypes;
@@ -1938,20 +1972,20 @@ HNManagedDeviceArbiter::rebuildSrvProviderMap()
         {
             std::cout << "rebuildSrvProviderMap - tsstr: " << *sit << std::endl;
 
-            std::map< std::string, std::vector< HNMDARecord* > >::iterator mit;
+            std::map< std::string, std::vector< std::string > >::iterator mit;
             mit = m_providerMap.find( *sit );
             
             if( mit != m_providerMap.end() )
             {
                 std::cout << "rebuildSrvProviderMap - add-new" << std::endl;
-                mit->second.push_back( &(it->second) );
+                mit->second.push_back( it->second.getCRC32ID() );
             }
             else
             {
                 std::cout << "rebuildSrvProviderMap - add-tail" << std::endl;
-                std::vector< HNMDARecord* > tmpList;
-                tmpList.push_back( &(it->second) );
-                m_providerMap.insert( std::pair< std::string, std::vector< HNMDARecord* > >( *sit, tmpList ) );
+                std::vector< std::string > tmpList;
+                tmpList.push_back( it->second.getCRC32ID() );
+                m_providerMap.insert( std::pair< std::string, std::vector< std::string > >( *sit, tmpList ) );
             }
         }    
     }
@@ -1964,7 +1998,7 @@ HNManagedDeviceArbiter::buildSrvProviderInfoList( std::vector< HNMDServiceInfo >
     srvList.clear();
 
     // Walk through each service
-    std::map< std::string, std::vector< HNMDARecord * > >::iterator it;
+    std::map< std::string, std::vector< std::string > >::iterator it;
     for( it = m_providerMap.begin(); it != m_providerMap.end(); it++ )
     {
         HNMDServiceInfo srvInfo;
@@ -1973,12 +2007,14 @@ HNManagedDeviceArbiter::buildSrvProviderInfoList( std::vector< HNMDServiceInfo >
 
         srvList.push_back( srvInfo );
 
-        for( std::vector< HNMDARecord * >::iterator dit = it->second.begin(); dit != it->second.end(); dit++ )
+        for( std::vector< std::string >::iterator cit = it->second.begin(); cit != it->second.end(); cit++ )
         {
+            std::map< std::string, HNMDARecord >::iterator dit = m_deviceMap.find( *cit );
+
             HNMDServiceDevRef devRef;
 
-            devRef.setDevName( (*dit)->getName() );
-            devRef.setDevCRC32ID( (*dit)->getCRC32ID() );
+            devRef.setDevName( dit->second.getName() );
+            devRef.setDevCRC32ID( dit->second.getCRC32ID() );
 
             srvList.back().getDeviceListRef().push_back( devRef );
         }
@@ -2132,7 +2168,7 @@ HNManagedDeviceArbiter::rebuildSrvMappings()
     
     // Walk through each device
     std::map< std::string, HNMDARecord >::iterator it;
-    for( it = mdrMap.begin(); it != mdrMap.end(); it++ )
+    for( it = m_deviceMap.begin(); it != m_deviceMap.end(); it++ )
     {
         // Get a list of provided endpoint type strings
         std::vector< std::string > srvTypes;
@@ -2148,20 +2184,20 @@ HNManagedDeviceArbiter::rebuildSrvMappings()
         {
             std::cout << "rebuildSrvMapping - tsstr: " << *sit << std::endl;
 
-            std::map< std::string, std::vector< HNMDARecord* > >::iterator mit;
+            std::map< std::string, std::vector< std::string > >::iterator mit;
             mit = m_servicesMap.find( *sit );
             
             if( mit != m_servicesMap.end() )
             {
                 std::cout << "rebuildSrvMapping - add-new" << std::endl;
-                mit->second.push_back( &(it->second) );
+                mit->second.push_back( it->second.getCRC32ID() );
             }
             else
             {
                 std::cout << "rebuildSrvMapping - add-tail" << std::endl;
-                std::vector< HNMDARecord* > tmpList;
-                tmpList.push_back( &(it->second) );
-                m_servicesMap.insert( std::pair< std::string, std::vector< HNMDARecord* > >( *sit, tmpList ) );
+                std::vector< std::string > tmpList;
+                tmpList.push_back( it->second.getCRC32ID() );
+                m_servicesMap.insert( std::pair< std::string, std::vector< std::string > >( *sit, tmpList ) );
             }
         }    
     }
@@ -2176,7 +2212,7 @@ HNManagedDeviceArbiter::buildSrvMappingInfoList( std::vector< HNMDServiceInfo > 
     std::cout << "buildSrvMappingInfoList - size: " << m_servicesMap.size() << std::endl;
 
     // Walk through each service
-    std::map< std::string, std::vector< HNMDARecord * > >::iterator it;
+    std::map< std::string, std::vector< std::string > >::iterator it;
     for( it = m_servicesMap.begin(); it != m_servicesMap.end(); it++ )
     {
         HNMDServiceInfo srvInfo;
@@ -2187,12 +2223,14 @@ HNManagedDeviceArbiter::buildSrvMappingInfoList( std::vector< HNMDServiceInfo > 
 
         std::cout << "buildSrvMappingInfoList - size2: " << it->second.size() << std::endl;
 
-        for( std::vector< HNMDARecord * >::iterator dit = it->second.begin(); dit != it->second.end(); dit++ )
+        for( std::vector< std::string >::iterator cit = it->second.begin(); cit != it->second.end(); cit++ )
         {
+            std::map< std::string, HNMDARecord >::iterator dit = m_deviceMap.find( *cit );
+
             HNMDServiceDevRef devRef;
 
-            devRef.setDevName( (*dit)->getName() );
-            devRef.setDevCRC32ID( (*dit)->getCRC32ID() );
+            devRef.setDevName( dit->second.getName() );
+            devRef.setDevCRC32ID( dit->second.getCRC32ID() );
 
             srvList.back().getDeviceListRef().push_back( devRef );
         }
