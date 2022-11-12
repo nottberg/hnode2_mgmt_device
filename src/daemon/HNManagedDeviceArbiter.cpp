@@ -318,7 +318,7 @@ HNMDServiceEndpoint::HNMDServiceEndpoint()
 
 HNMDServiceEndpoint::~HNMDServiceEndpoint()
 {
-
+   std::cout << "ServiceEndpoint destruction - type: " << m_type << "  uri: " << m_rootURI << std::endl;
 }
 
 void
@@ -374,6 +374,12 @@ bool
 HNMDServiceEndpoint::getVisited()
 {
     return m_visited;
+}
+
+void 
+HNMDServiceEndpoint::debugPrint( uint offset )
+{
+    printf( "%*.*sService: %s  %s\n", offset, offset, " ", m_type.c_str(), m_rootURI.c_str() );
 }
 
 // Helper class for running HNManagedDeviceArbiter 
@@ -432,6 +438,9 @@ HNMDARecord::HNMDARecord( const HNMDARecord &srcObj )
 
     m_mgmtCmd    = srcObj.m_mgmtCmd;
 
+    m_srvMapProvided = srcObj.m_srvMapProvided;
+    m_srvMapDesired = srcObj.m_srvMapDesired;
+ 
     // Do not copy over a mutex as they are unique
     // to each object.
     m_deviceMutex = NULL;
@@ -684,6 +693,9 @@ HNMDARecord::findPreferredConnection( HMDAR_ADDRTYPE_T preferredType, HNMDARAddr
 HNMDL_RESULT_T 
 HNMDARecord::updateRecord( HNMDARecord &newRecord )
 {   
+
+    std::cout << "updateRecord - discID: " << newRecord.getDiscoveryID() << std::endl;
+
     setDiscoveryID( newRecord.getDiscoveryID() );
     setDeviceType( newRecord.getDeviceType() );
     setDeviceVersion( newRecord.getDeviceVersion() );
@@ -782,6 +794,7 @@ HNMDARecord::completeSrvProviderUpdates()
 
         if( it->second.getVisited() == false )
         {
+            std::cout << "completeSrvProviderUpdates - erasing" << std::endl;
             changed = true;
             m_srvMapProvided.erase( it++ );
         }
@@ -896,6 +909,28 @@ HNMDARecord::getSrvMappingTSList( std::vector< std::string > &srvTypesList )
         srvTypesList.push_back( it->second.getType() );
 }
 
+std::string
+HNMDARecord::getServiceProviderURI( std::string srvType )
+{
+    std::string rtnStr;
+
+    std::cout << "getServiceProviderURI - lookup: " << srvType << "  list-size: " << m_srvMapProvided.size() << std::endl;
+    
+    for( std::map< std::string, HNMDServiceEndpoint >::iterator dit = m_srvMapProvided.begin(); dit != m_srvMapProvided.end(); dit++ )
+    {
+        std::cout << "srvProviderDebug - type: " << dit->second.getType() << "   uri: " << dit->second.getRootURIAsStr() << std::endl;
+    }
+
+    std::map< std::string, HNMDServiceEndpoint >::iterator it = m_srvMapProvided.find( srvType );
+
+    if( it == m_srvMapProvided.end() )
+        return rtnStr;
+
+    std::cout << "getServiceProviderURI - found: " << srvType << "  url: " << it->second.getRootURIAsStr() << std::endl;
+
+    return it->second.getRootURIAsStr();
+}
+
 void 
 HNMDARecord::debugPrint( uint offset )
 {
@@ -911,6 +946,12 @@ HNMDARecord::debugPrint( uint offset )
     {
         it->debugPrint(offset);
     }
+
+    for( std::map< std::string, HNMDServiceEndpoint >::iterator pit = m_srvMapProvided.begin(); pit != m_srvMapProvided.end(); pit++ )
+    {
+        pit->second.debugPrint(offset);
+    }
+
 }
 
 HNMDSrvRef::HNMDSrvRef()
@@ -1009,15 +1050,98 @@ HNMDServiceInfo::getDeviceListRef()
     return m_devRefList;
 }
 
+HNMDServiceAssoc::HNMDServiceAssoc()
+{
+
+}
+
+HNMDServiceAssoc::~HNMDServiceAssoc()
+{
+
+}
+
+void
+HNMDServiceAssoc::setType( HNMDSA_TYPE_T type )
+{
+    m_type = type;
+}
+
+void
+HNMDServiceAssoc::setSrvType( std::string value )
+{
+    m_srvType = value;
+}
+
+void
+HNMDServiceAssoc::setProviderCRC32ID( std::string value )
+{
+    m_providerCRC32ID = value;
+}
+
+void
+HNMDServiceAssoc::setDesirerCRC32ID( std::string value )
+{
+    m_desirerCRC32ID = value;
+}
+
+HNMDSA_TYPE_T
+HNMDServiceAssoc::getType()
+{
+    return m_type;
+}
+
+std::string
+HNMDServiceAssoc::getTypeAsStr()
+{
+    switch( m_type )
+    {
+        case HNMDSA_TYPE_DEFAULT:
+            return "default";
+        break;
+
+        case HNMDSA_TYPE_DIRECTED:
+            return "directed";
+        break;
+    }
+
+    return "unknown";
+}
+
+std::string
+HNMDServiceAssoc::getSrvType()
+{
+    return m_srvType;
+}
+
+std::string
+HNMDServiceAssoc::getProviderCRC32ID()
+{
+    return m_providerCRC32ID;
+}
+
+std::string
+HNMDServiceAssoc::getDesirerCRC32ID()
+{
+    return m_desirerCRC32ID;
+}
+
 HNManagedDeviceArbiter::HNManagedDeviceArbiter()
 {
     runMonitor = false;
     thelp = NULL;
+
+    m_mgmtDevice = NULL;
 }
 
 HNManagedDeviceArbiter::~HNManagedDeviceArbiter()
 {
 
+}
+
+void 
+HNManagedDeviceArbiter::setSelfInfo( HNodeDevice *mgmtDevice )
+{
+    m_mgmtDevice = mgmtDevice;
 }
 
 HNMDL_RESULT_T 
@@ -1032,28 +1156,51 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
     if( it == m_deviceMap.end() )
     {
         // This is a new record
-        if( record.getCRC32ID() == m_selfHnodeID.getCRC32AsHexStr() )
+        if( record.getCRC32ID() == getSelfCRC32IDStr() )
         {
             record.setManagementState( HNMDR_MGMT_STATE_SELF );
+
+            std::cout << "Management Node Device adding inbuilt services - crc32id: " << record.getCRC32ID() << std::endl;
 
             // The health and logging sinks are both built into the management
             // node itself.
             // HNMDServiceEndpoint srvRec;
             // HNMDARAddress addrInfo;
+            record.startSrvProviderUpdates();
 
-            // if( record.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, addrInfo ) == HNMDL_RESULT_SUCCESS )
-            // {
-                //srvRec.setRootURIFromStr( addrInfo.getURL("http", "hnode2/mgmt/healthSink") );
-                //m_serviceMap.insert( std::pair<std::string, HNMDServiceEndpoint>("health", srvRec ));
+            // Get a record object reference for this service type.
+            bool added = false;            
+            Poco::URI uri;
+            uri.setScheme( "http" );
+            uri.setHost( m_mgmtDevice->getRestAddress() );
+            uri.setPort( m_mgmtDevice->getRestPort() );
+            std::string path = m_mgmtDevice->getRestRootPath();
 
-                //srvRec.setRootURIFromStr( addrInfo.getURL("http", "hnode2/mgmt/logSink") );
-                //m_serviceMap.insert( std::pair<std::string, HNMDServiceEndpoint>("logging", srvRec ));
-            // }
+            HNMDServiceEndpoint &srvRef = record.updateSrvProvider( "hnsrv-health-sink", added );
+            srvRef.setVersion( "1.0.0" );
+            uri.setPath( path + "/mgmt/health-sink" );
+            srvRef.setRootURIFromStr( uri.toString() );
+
+            HNMDServiceEndpoint &srvRef2 = record.updateSrvProvider( "hnsrv-log-sink", added );
+            srvRef2.setVersion( "1.0.0" );
+            uri.setPath( path + "/mgmt/exlog-sink" );
+            srvRef2.setRootURIFromStr( uri.toString() );
+
+            // Done with updates to services provided list
+            record.completeSrvProviderUpdates();
         }
         else
             record.setManagementState( HNMDR_MGMT_STATE_DISCOVERED );
 
         m_deviceMap.insert( std::pair< std::string, HNMDARecord >( record.getCRC32ID(), record ) );
+
+        std::cout << "================================" << std::endl;
+        std::map< std::string, HNMDARecord >::iterator dit;
+        for( dit = m_deviceMap.begin(); dit != m_deviceMap.end(); dit++ )
+        {
+            dit->second.debugPrint( 2 );
+        }
+        std::cout << "================================" << std::endl;
     }
     else
     {
@@ -1082,24 +1229,37 @@ HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
     return HNMDL_RESULT_SUCCESS;
 }
 
-void 
-HNManagedDeviceArbiter::setSelfInfo( std::string hnodeIDStr )
-{
-    m_selfHnodeID.setFromStr( hnodeIDStr );
-}
-
 std::string 
 HNManagedDeviceArbiter::getSelfHNodeIDStr()
 {
     std::string rtnStr;
-    m_selfHnodeID.getStr( rtnStr );
+
+    if( m_mgmtDevice != NULL )
+        rtnStr = m_mgmtDevice->getHNodeIDStr();
+
     return rtnStr;
 }
 
 std::string 
+HNManagedDeviceArbiter::getSelfCRC32IDStr()
+{
+    std::string rtnStr;
+
+    if( m_mgmtDevice != NULL )
+        rtnStr = m_mgmtDevice->getHNodeIDCRC32Str();
+
+    return rtnStr;
+}
+
+uint32_t
 HNManagedDeviceArbiter::getSelfCRC32ID()
 {
-    return m_selfHnodeID.getCRC32AsHexStr();
+    uint rtnVal = 0;
+
+    if( m_mgmtDevice != NULL )
+        rtnVal = m_mgmtDevice->getHNodeIDCRC32();
+
+    return rtnVal;
 }
 
 HNMDL_RESULT_T
@@ -1197,6 +1357,15 @@ HNManagedDeviceArbiter::runMonitoringLoop()
 {
     std::cout << "HNManagedDeviceArbiter::runMonitoringLoop()" << std::endl;
 
+    // FIXME -- Temporarily setup some default mappings
+    HNMDSrvRef tmpRef;
+
+    tmpRef.setSrvType( "hnsrv-health-sink" );
+    tmpRef.setDevCRC32ID( getSelfCRC32IDStr() );
+
+    m_defaultMappings.insert( std::pair< std::string, HNMDSrvRef >( "hnsrv-health-sink", tmpRef ) );
+    // End FIXME
+
     m_monitorWaitTime = 10;
 
     // Run the main loop
@@ -1284,13 +1453,19 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                 // REST read for desired services and current mappings
                 case HNMDR_MGMT_STATE_SRV_MAPPING_INFO:
                     if( updateDeviceServicesMappingInfo( it->second ) != HNMDL_RESULT_SUCCESS )
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );
                     else
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 0 );
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_SRV_MAP_UPDATE, 0 );
                 break;
                 
                 // REST put to update desired service mappings
                 case HNMDR_MGMT_STATE_SRV_MAP_UPDATE:
+                    if( executeDeviceServicesUpdateMapping( it->second ) != HNMDL_RESULT_SUCCESS )
+                    {
+
+                    }
+                    
+                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );               
                 break;
 
                 // Device is waiting to be claimed 
@@ -1644,10 +1819,10 @@ HNManagedDeviceArbiter::updateDeviceOwnerInfo( HNMDARecord &device )
             // Save away the owners hnodeID
             device.setOwnerID( ownerHNID );
 
-            std::cout << "updateDeviceOwnerInfo - ownerCompare - " << m_selfHnodeID.getCRC32() << " : " << ownerHNID.getCRC32() << std::endl;
+            std::cout << "updateDeviceOwnerInfo - ownerCompare - " << m_mgmtDevice->getHNodeIDCRC32Str() << " : " << ownerHNID.getCRC32() << std::endl;
 
             // Check if we are the owner
-            if( m_selfHnodeID.getCRC32() == ownerHNID.getCRC32() )
+            if( getSelfCRC32ID() == ownerHNID.getCRC32() )
                 device.setOwnershipState( HNMDR_OWNER_STATE_MINE );
             else
                 device.setOwnershipState( HNMDR_OWNER_STATE_OTHER );
@@ -1708,9 +1883,7 @@ HNManagedDeviceArbiter::sendDeviceClaimRequest( HNMDARecord &device )
     // Build the json payload to send
     std::ostream& os = session.sendRequest( request );
 
-    std::string hnodeIDStr;
-    m_selfHnodeID.getStr( hnodeIDStr );
-    jsRoot.set( "owner_hnodeID", hnodeIDStr );
+    jsRoot.set( "owner_hnodeID", this->getSelfHNodeIDStr() );
 
     // Render into a json string.
     try {
@@ -1991,8 +2164,149 @@ HNManagedDeviceArbiter::rebuildSrvProviderMap()
     }
 }
 
+std::string
+HNManagedDeviceArbiter::getDeviceServiceProviderURI( std::string devCRC32ID, std::string srvType )
+{
+    std::string rtnURI;
+
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( devCRC32ID );
+
+    if( it == m_deviceMap.end() )
+        return rtnURI;
+
+    std::cout << "getDeviceServiceProviderURI - found: " << devCRC32ID << std::endl;
+
+    rtnURI = it->second.getServiceProviderURI( srvType );
+
+    return rtnURI;
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::executeDeviceServicesUpdateMapping( HNMDARecord &device )
+{
+    std::map< std::string, std::string > uriMap;
+    std::vector< std::string > srvTypes;
+    bool serviceProviderChanged = false;
+
+    // Note the start of potential service list updates
+    device.lockForUpdate();
+
+    // Get a list of desired services
+    std::cout << "executeDeviceServicesUpdateMapping - device: " << device.getCRC32ID() << std::endl;
+
+    device.getSrvMappingTSList( srvTypes );
+
+    std::cout << "executeDeviceServicesUpdateMapping - tscnt: " << srvTypes.size() << std::endl;
+
+    // Walk through the desired services and see if the mapping is correct.
+    for( std::vector< std::string >::iterator it = srvTypes.begin(); it != srvTypes.end(); it++ )
+    {
+        std::string maptoURI;
+
+        bool added = false;
+        HNMDServiceEndpoint &srvRef = device.updateSrvMapping( *it, added );
+
+        // Generate the desired mapping uri
+        // First check for a specific mapping
+        // m_directedMappings.find();
+        //if(  )
+
+        // Otherwise look for a default mapping
+        std::map< std::string, HNMDSrvRef >::iterator sit = m_defaultMappings.find( *it );
+
+        if( sit != m_defaultMappings.end() )
+        {
+            std::string maptoCRC32ID = sit->second.getDevCRC32ID();
+
+            std::cout << "executeDeviceServicesUpdateMapping - defMapCRC32ID: " << maptoCRC32ID << std::endl;
+
+            maptoURI = getDeviceServiceProviderURI( maptoCRC32ID, *it );
+        }
+
+        // Get any current mapping
+        std::string mappedURI = srvRef.getRootURIAsStr();
+
+        std::cout << "executeDeviceServicesUpdateMapping - mapto: " << maptoURI << "  mapped: " << mappedURI << std::endl;
+
+
+        // If the currently mapped URI and the desired URI
+        // are different then send an update to the device.
+        if( maptoURI != mappedURI )
+        {
+            // Queue the change for transmission
+            uriMap.insert( std::pair< std::string, std::string >( *it, maptoURI ) );
+
+            // Note the a change was made
+            serviceProviderChanged = true;
+        }
+
+    }
+
+    device.unlockForUpdate();
+
+    // If the service providers have changed, then transmit the new mapping to the device
+    if( serviceProviderChanged == true )
+    {
+        Poco::URI uri;
+        HNMDARAddress dcInfo;
+        pjs::Array  jsSrvMapUpdate;
+
+        for( std::map< std::string, std::string >::iterator mit = uriMap.begin(); mit != uriMap.end(); mit++ )
+        {
+            pjs::Object jsMapObj;
+
+            std::cout << "srvMapping - srvType: " << mit->first << "  uri: " << mit->second << std::endl;
+            jsMapObj.set( "type", mit->first );
+            jsMapObj.set( "mapped-uri", mit->second );
+
+            jsSrvMapUpdate.add( jsMapObj );
+        }
+
+        if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+        {
+            device.unlockForUpdate();
+            return HNMDL_RESULT_FAILURE;
+        }
+
+        device.unlockForUpdate();
+
+        uri.setScheme( "http" );
+        uri.setHost( dcInfo.getAddress() );
+        uri.setPort( dcInfo.getPort() );
+        uri.setPath( "/hnode2/device/services/mappings" );
+
+        pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+        pns::HTTPRequest request( pns::HTTPRequest::HTTP_PUT, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+        pns::HTTPResponse response;
+
+        request.setContentType( "application/json" );
+
+        // Build the json payload to send
+        std::ostream& os = session.sendRequest( request );
+
+        // Render into a json string.
+        try {
+            pjs::Stringifier::stringify( jsSrvMapUpdate, os );
+        } catch( Poco::Exception& ex ) {
+            std::cerr << ex.displayText() << std::endl;
+            return HNMDL_RESULT_FAILURE;
+        }
+ 
+        std::istream& rs = session.receiveResponse( response );
+        std::cout << response.getStatus() << " " << response.getReason() << std::endl;
+
+        if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+        {
+            return HNMDL_RESULT_FAILURE;
+        }
+
+    } 
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
 void
-HNManagedDeviceArbiter::buildSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList )
+HNManagedDeviceArbiter::reportSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList )
 {
     // Start with a clean slate
     srvList.clear();
@@ -2179,7 +2493,7 @@ HNManagedDeviceArbiter::rebuildSrvMappings()
 
         std::cout << "rebuildSrvMapping - tscnt: " << srvTypes.size() << std::endl;
 
-        // Add this device to the srvMappings for each service it provides
+        // Add this device to the srvMappings for each service it desires
         for( std::vector< std::string >::iterator sit = srvTypes.begin(); sit != srvTypes.end(); sit++ )
         {
             std::cout << "rebuildSrvMapping - tsstr: " << *sit << std::endl;
@@ -2204,7 +2518,7 @@ HNManagedDeviceArbiter::rebuildSrvMappings()
 }
 
 void
-HNManagedDeviceArbiter::buildSrvMappingInfoList( std::vector< HNMDServiceInfo > &srvList )
+HNManagedDeviceArbiter::reportSrvMappingInfoList( std::vector< HNMDServiceInfo > &srvList )
 {
     // Start with a clean slate
     srvList.clear();
@@ -2235,4 +2549,50 @@ HNManagedDeviceArbiter::buildSrvMappingInfoList( std::vector< HNMDServiceInfo > 
             srvList.back().getDeviceListRef().push_back( devRef );
         }
     }
+}
+
+void
+HNManagedDeviceArbiter::reportSrvDefaultMappings( std::vector< HNMDServiceAssoc > &assocList )
+{
+    // Start with a clean slate
+    assocList.clear();
+
+    std::cout << "reportSrvDefaultMappings - size: " << m_defaultMappings.size() << std::endl;
+
+    // Walk through each service
+    std::map< std::string, HNMDSrvRef >::iterator it;
+    for( it = m_defaultMappings.begin(); it != m_defaultMappings.end(); it++ )
+    {
+        HNMDServiceAssoc srvAssoc;
+
+        /*
+        if( it->)
+
+        HNMDServiceInfo srvInfo;
+
+        srvInfo.setSrvType( it->first );
+
+        srvList.push_back( srvInfo );
+
+        std::cout << "buildSrvMappingInfoList - size2: " << it->second.size() << std::endl;
+
+        for( std::vector< std::string >::iterator cit = it->second.begin(); cit != it->second.end(); cit++ )
+        {
+            std::map< std::string, HNMDARecord >::iterator dit = m_deviceMap.find( *cit );
+
+            HNMDServiceDevRef devRef;
+
+            devRef.setDevName( dit->second.getName() );
+            devRef.setDevCRC32ID( dit->second.getCRC32ID() );
+
+            srvList.back().getDeviceListRef().push_back( devRef );
+        }
+        */
+    }
+}
+
+void
+HNManagedDeviceArbiter::reportSrvDirectedMappings( std::vector< HNMDServiceAssoc > &assocList )
+{
+    assocList.clear();
 }

@@ -126,7 +126,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     m_hnodeDev.setDeviceType( HNODE_MGMT_DEVTYPE );
     m_hnodeDev.setInstance( m_instanceName );
     m_hnodeDev.setName("mg1");
-    m_hnodeDev.setPort(8400);
+    m_hnodeDev.setRestPort(8400);
 
     HNDEndpoint hndEP;
 
@@ -139,7 +139,7 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     registerProxyEndpointsFromOpenAPI( g_HNode2ProxyMgmtAPI );
 
     // Tell the arbiter our CRC32ID so we can filter self discovery
-    m_arbiter.setSelfInfo( m_hnodeDev.getHNodeIDStr() );
+    m_arbiter.setSelfInfo( &m_hnodeDev );
 
     // Setup the queue for requests from the SCGI interface
     m_scgiRequestQueue.init();
@@ -150,6 +150,12 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     m_proxyResponseQueue.init();
 
     m_proxySeq.setParentResponseQueue( &m_proxyResponseQueue );
+
+    // Start accepting device notifications
+    m_hnodeDev.setNotifySink( this );
+
+    // Setup device service advertisements
+    m_hnodeDev.registerProvidedServiceExtension( "hnsrv-health-sink", "1.0.0", "health-sink" );
 
     // Initialize for event loop
     epollFD = epoll_create1( 0 );
@@ -162,8 +168,6 @@ HNManagementDevice::main( const std::vector<std::string>& args )
     // Buffer where events are returned 
     events = (struct epoll_event *) calloc( MAXEVENTS, sizeof event );
 
-    // Start accepting device notifications
-    m_hnodeDev.setNotifySink( this );
 
     // Start the HNode Device
     m_hnodeDev.start();
@@ -1057,12 +1061,11 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         pjs::Object jsRoot;
         pjs::Object jsProviderSet;
         pjs::Object jsMappingSet;
-      //  pjs::Array jsUnclaimedArray;
-      //  pjs::Array jsOtherOwnerArray;
-      //  pjs::Array jsUnavailableArray;
+        pjs::Object jsDefaultSet;
+        pjs::Array  jsDirectedArray;
 
         std::vector< HNMDServiceInfo > srvInfoList;
-        m_arbiter.buildSrvProviderInfoList( srvInfoList );
+        m_arbiter.reportSrvProviderInfoList( srvInfoList );
 
         for( std::vector< HNMDServiceInfo >::iterator sit = srvInfoList.begin(); sit != srvInfoList.end(); sit++ )
         {
@@ -1080,7 +1083,7 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
             jsProviderSet.set( sit->getSrvType(), jsProviderArray );
         }
 
-        m_arbiter.buildSrvMappingInfoList( srvInfoList );
+        m_arbiter.reportSrvMappingInfoList( srvInfoList );
 
         for( std::vector< HNMDServiceInfo >::iterator sit = srvInfoList.begin(); sit != srvInfoList.end(); sit++ )
         {
@@ -1098,10 +1101,42 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
             jsMappingSet.set( sit->getSrvType(), jsProviderArray );
         }
 
-        // Report the owned, unclaimed, other-owner, and unavailable arrays
+        std::vector< HNMDServiceAssoc > assocList;
+        m_arbiter.reportSrvDefaultMappings( assocList );
+
+        for( std::vector< HNMDServiceAssoc >::iterator sit = assocList.begin(); sit != assocList.end(); sit++ )
+        {
+            pjs::Object jsAssoc;
+
+            if( sit->getType() != HNMDSA_TYPE_DEFAULT )
+              continue;
+
+            jsAssoc.set( "providerCRC32ID", sit->getProviderCRC32ID() );
+              
+            jsDefaultSet.set( sit->getSrvType(), jsAssoc );
+        }        
+
+        m_arbiter.reportSrvDirectedMappings( assocList );
+
+        for( std::vector< HNMDServiceAssoc >::iterator sit = assocList.begin(); sit != assocList.end(); sit++ )
+        {
+            pjs::Object jsAssoc;
+
+            if( sit->getType() != HNMDSA_TYPE_DIRECTED )
+              continue;
+
+            jsAssoc.set( "srvType", sit->getSrvType() );
+            jsAssoc.set( "desirerCRC32ID", sit->getDesirerCRC32ID() );
+            jsAssoc.set( "providerCRC32ID", sit->getProviderCRC32ID() );
+              
+            jsDirectedArray.add( jsAssoc );
+        }        
+
+        // Report the provided, desired, default mappings, and directed mappings
         jsRoot.set( "providerSet", jsProviderSet );
         jsRoot.set( "mappingSet", jsMappingSet );
-        //jsRoot.set( "unavailableDevices", jsUnavailableArray );
+        jsRoot.set( "defaultMappings", jsDefaultSet );
+        jsRoot.set( "directedMappings", jsDirectedArray );
 
         // Render into a json string.
         try {

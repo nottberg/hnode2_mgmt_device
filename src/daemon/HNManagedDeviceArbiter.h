@@ -5,7 +5,8 @@
 #include <map>
 #include <mutex>
 
-#include "hnode2/HNodeID.h"
+#include <hnode2/HNodeDevice.h>
+#include <hnode2/HNodeID.h>
 
 // Forward declaration for friend class below
 class HNMDARunner;
@@ -131,6 +132,8 @@ class HNMDServiceEndpoint
 
         void setVisited( bool value );
         bool getVisited();
+
+        void debugPrint( uint offset );
 
     private:
         std::string m_type;
@@ -278,6 +281,8 @@ class HNMDARecord
 
         HNMDMgmtCmd& getDeviceMgmtCmdRef();
 
+        std::string getServiceProviderURI( std::string srvType );
+
         void debugPrint( uint offset );
 };
 
@@ -333,11 +338,45 @@ class HNMDServiceInfo
         std::vector< HNMDServiceDevRef > m_devRefList;
 };
 
+typedef enum HNMDServiceAssociationTypeEnum{
+    HNMDSA_TYPE_NOTSET,    // No type set
+    HNMDSA_TYPE_DEFAULT,   // Default mapping of specific provider to all desirers of a srvType
+    HNMDSA_TYPE_DIRECTED   // A specific mapping between a provider device and a desirer device
+}HNMDSA_TYPE_T;
+
+class HNMDServiceAssoc
+{
+    public:
+        HNMDServiceAssoc();
+       ~HNMDServiceAssoc();
+
+        void setType( HNMDSA_TYPE_T type );
+        void setSrvType( std::string value );
+        void setProviderCRC32ID( std::string value );
+        void setDesirerCRC32ID( std::string value );
+
+        HNMDSA_TYPE_T getType();
+        std::string getTypeAsStr();
+
+        std::string getSrvType();
+        std::string getProviderCRC32ID();
+        std::string getDesirerCRC32ID();
+
+    private:
+        HNMDSA_TYPE_T  m_type;
+        std::string    m_srvType;
+        std::string    m_providerCRC32ID;
+        std::string    m_desirerCRC32ID;
+};
+
 class HNManagedDeviceArbiter
 {
     private:
+        // The management node device itself.
+        HNodeDevice  *m_mgmtDevice;
+
         // The HNodeID for the management node itself.
-        HNodeID     m_selfHnodeID;
+        // HNodeID     m_selfHnodeID;
 
         // A mutex over the device map modifications
         std::mutex m_mapMutex;
@@ -345,16 +384,16 @@ class HNManagedDeviceArbiter
         // A map of known hnode2 devices
         std::map< std::string, HNMDARecord > m_deviceMap;
 
-        // A map of service providers
+        // A map of serviceType to list of device CRC32ID for providers
         std::map< std::string, std::vector< std::string > > m_providerMap;
 
-        // A map of service mappings
+        // A map of serviceType to list of device CRC32ID for desirers
         std::map< std::string, std::vector< std::string > > m_servicesMap;
 
-        // Default service mappings
-        std::map< std::string, std::vector< HNMDSrvRef > > m_defaultMappings;
+        // Map serviceType to default provider
+        std::map< std::string, HNMDSrvRef > m_defaultMappings;
 
-        // Directed service mappings
+        // Map service desired to service provider
         std::map< HNMDSrvRef, HNMDSrvRef > m_directedMappings;
 
         // The thread helper
@@ -374,8 +413,11 @@ class HNManagedDeviceArbiter
         HNMDL_RESULT_T sendDeviceSetParameters( HNMDARecord &device );
         HNMDL_RESULT_T updateDeviceServicesProvideInfo( HNMDARecord &device );
         HNMDL_RESULT_T updateDeviceServicesMappingInfo( HNMDARecord &device );
+        HNMDL_RESULT_T executeDeviceServicesUpdateMapping( HNMDARecord &device );
 
         HNMDL_RESULT_T executeDeviceMgmtCmd( HNMDARecord &device );
+
+        std::string getDeviceServiceProviderURI( std::string devCRC32ID, std::string srvType );
 
         void rebuildSrvProviderMap();
         void rebuildSrvMappings();
@@ -391,9 +433,10 @@ class HNManagedDeviceArbiter
         HNMDL_RESULT_T notifyDiscoverAdd( HNMDARecord &record );
         HNMDL_RESULT_T notifyDiscoverRemove( HNMDARecord &record );
 
-        void setSelfInfo( std::string hnodeIDStr );
+        void setSelfInfo( HNodeDevice *mgmtDevice );
         std::string getSelfHNodeIDStr();
-        std::string getSelfCRC32ID();
+        std::string getSelfCRC32IDStr();
+        uint32_t getSelfCRC32ID();
 
         void start();
         void shutdown();
@@ -407,9 +450,10 @@ class HNManagedDeviceArbiter
 
         HNMDL_RESULT_T startDeviceMgmtCmd( std::string crc32ID );
 
-        void buildSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList );
-
-        void buildSrvMappingInfoList( std::vector< HNMDServiceInfo > &srvList );
+        void reportSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList );
+        void reportSrvMappingInfoList( std::vector< HNMDServiceInfo > &srvList );
+        void reportSrvDefaultMappings( std::vector< HNMDServiceAssoc > &assocList );
+        void reportSrvDirectedMappings( std::vector< HNMDServiceAssoc > &assocList );
 
         void debugPrint();
 
