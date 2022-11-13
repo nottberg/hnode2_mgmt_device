@@ -492,6 +492,35 @@ HNManagementDevice::dispatchEP( HNodeDevice *parent, HNOperationData *opData )
     {
         //action.setType( HNID_AR_TYPE_IRRSTATUS );
     }
+    else if( "postHealthEvent" == opID )
+    {
+        std::istream& rs = opData->requestBody();
+        std::string body;
+        Poco::StreamCopier::copyToString( rs, body );
+        
+        std::cout << "=== Post Health Event Data ===" << std::endl;
+        std::cout << body << std::endl;
+
+        // Object was created return info
+        opData->responseSetCreated( "he1" );
+        opData->responseSetStatusAndReason( HNR_HTTP_CREATED );
+
+        //action.setType( HNID_AR_TYPE_IRRSTATUS );
+    }
+    else if( "postLogEvent" == opID )
+    {
+        std::istream& rs = opData->requestBody();
+        std::string body;
+        Poco::StreamCopier::copyToString( rs, body );
+        
+        std::cout << "=== Post Log Event Data ===" << std::endl;
+        std::cout << body << std::endl;
+
+        // Object was created return info
+        opData->responseSetCreated( "le1" );
+        opData->responseSetStatusAndReason( HNR_HTTP_CREATED );      
+        //action.setType( HNID_AR_TYPE_IRRSTATUS );
+    }
     else
     {
         // Send back not implemented
@@ -1188,7 +1217,52 @@ const std::string g_HNode2MgmtRest = R"(
             }
           }
         }
+      },
+
+      "/hnode2/mgmt/health-sink/event": {
+        "post": {
+          "summary": "POST a health event notification.",
+          "operationId": "postHealthEvent",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        }
+      },
+
+      "/hnode2/mgmt/log-sink/event": {
+        "post": {
+          "summary": "POST a new log entry.",
+          "operationId": "postLogEvent",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        }
       }
+
   }
 }
 )";

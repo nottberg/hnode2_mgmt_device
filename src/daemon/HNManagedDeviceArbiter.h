@@ -421,6 +421,9 @@ class HNManagedDeviceArbiter
 
         void rebuildSrvProviderMap();
         void rebuildSrvMappings();
+        
+        void addMgmtDeviceProvidedSrv( HNMDARecord &record, std::string srvType, std::string version, std::string pathExt );
+        void initMgmtDevice( HNMDARecord &record );
 
     protected:
         void runMonitoringLoop();

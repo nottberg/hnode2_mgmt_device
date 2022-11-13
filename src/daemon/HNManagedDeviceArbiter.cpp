@@ -1144,6 +1144,42 @@ HNManagedDeviceArbiter::setSelfInfo( HNodeDevice *mgmtDevice )
     m_mgmtDevice = mgmtDevice;
 }
 
+void
+HNManagedDeviceArbiter::addMgmtDeviceProvidedSrv( HNMDARecord &record, std::string srvType, std::string version, std::string pathExt )
+{
+    bool added = false;            
+    Poco::URI uri;
+    uri.setScheme( "http" );
+    uri.setHost( m_mgmtDevice->getRestAddress() );
+    uri.setPort( m_mgmtDevice->getRestPort() );
+    std::string path = m_mgmtDevice->getRestRootPath();
+    path = path + "/" + pathExt;
+    uri.setPath( path );
+
+    HNMDServiceEndpoint &srvRef = record.updateSrvProvider( srvType, added );
+
+    srvRef.setType( srvType );        
+    srvRef.setVersion( version );
+    srvRef.setRootURIFromStr( uri.toString() );
+}
+
+void
+HNManagedDeviceArbiter::initMgmtDevice( HNMDARecord &record )
+{
+    // The health and logging sinks are both built into the management
+    // node itself.
+    record.startSrvProviderUpdates();
+
+    // Get a record object reference for this service type.
+    addMgmtDeviceProvidedSrv( record, "hnsrv-health-sink", "1.0.0", "mgmt/health-sink" );
+
+    addMgmtDeviceProvidedSrv( record, "hnsrv-log-sink", "1.0.0", "mgmt/log-sink" );
+
+    // Done with updates to services provided list
+    record.completeSrvProviderUpdates();
+
+}
+
 HNMDL_RESULT_T 
 HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
 {
@@ -1158,37 +1194,12 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
         // This is a new record
         if( record.getCRC32ID() == getSelfCRC32IDStr() )
         {
-            record.setManagementState( HNMDR_MGMT_STATE_SELF );
-
             std::cout << "Management Node Device adding inbuilt services - crc32id: " << record.getCRC32ID() << std::endl;
 
-            // The health and logging sinks are both built into the management
-            // node itself.
-            // HNMDServiceEndpoint srvRec;
-            // HNMDARAddress addrInfo;
-            record.startSrvProviderUpdates();
+            initMgmtDevice( record );
 
-            // Get a record object reference for this service type.
-            bool added = false;            
-            Poco::URI uri;
-            uri.setScheme( "http" );
-            uri.setHost( m_mgmtDevice->getRestAddress() );
-            uri.setPort( m_mgmtDevice->getRestPort() );
-            std::string path = m_mgmtDevice->getRestRootPath();
-
-            HNMDServiceEndpoint &srvRef = record.updateSrvProvider( "hnsrv-health-sink", added );
-            srvRef.setVersion( "1.0.0" );
-            uri.setPath( path + "/mgmt/health-sink" );
-            srvRef.setRootURIFromStr( uri.toString() );
-
-            HNMDServiceEndpoint &srvRef2 = record.updateSrvProvider( "hnsrv-log-sink", added );
-            srvRef2.setVersion( "1.0.0" );
-            uri.setPath( path + "/mgmt/exlog-sink" );
-            srvRef2.setRootURIFromStr( uri.toString() );
-
-            // Done with updates to services provided list
-            record.completeSrvProviderUpdates();
-        }
+            record.setManagementState( HNMDR_MGMT_STATE_SELF );
+         }
         else
             record.setManagementState( HNMDR_MGMT_STATE_DISCOVERED );
 
@@ -1461,11 +1472,9 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                 // REST put to update desired service mappings
                 case HNMDR_MGMT_STATE_SRV_MAP_UPDATE:
                     if( executeDeviceServicesUpdateMapping( it->second ) != HNMDL_RESULT_SUCCESS )
-                    {
-
-                    }
-                    
-                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );               
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
+                    else
+                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );               
                 break;
 
                 // Device is waiting to be claimed 
