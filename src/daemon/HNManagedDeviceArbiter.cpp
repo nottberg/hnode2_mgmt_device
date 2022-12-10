@@ -522,6 +522,8 @@ HNMDARecord::getManagementStateStr()
         return "EXEC_CMD";
     else if( HNMDR_MGMT_STATE_NOT_AVAILABLE == m_mgmtState )
         return "NOT_AVAILABLE";
+    else if( HNMDR_MGMT_STATE_UPDATE_HEALTH == m_mgmtState )
+        return "UPDATE_HEALTH";
     else if( HNMDR_MGMT_STATE_NOTSET == m_mgmtState )
         return "NOTSET";
 
@@ -930,6 +932,248 @@ HNMDARecord::getServiceProviderURI( std::string srvType )
 
     return it->second.getRootURIAsStr();
 }
+
+HNMDL_RESULT_T
+HNMDARecord::handleHealthComponentStrInstanceUpdate( void *jsSIPtr, HNFSInstance *strInstPtr, bool &changed )
+{
+    // Start off with no change indication
+    changed = false;
+
+    // Cast the ptr-ptr back to a POCO JSON Ptr
+    pjs::Object::Ptr jsSI = *((pjs::Object::Ptr *) jsSIPtr);
+
+    if( jsSI->has( "fmtCode" ) )
+    {
+        uint fmtCode = jsSI->getValue<uint>( "fmtCode" );
+        if( strInstPtr->getFmtCode() != fmtCode )
+        {
+            strInstPtr->setFmtCode( fmtCode );
+            changed = true;
+        }
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+HNMDL_RESULT_T
+HNMDARecord::handleHealthComponentUpdate( void *jsCompPtr, HNDHComponent *compPtr, bool &changed )
+{
+    // Start off with no change indication
+    changed = false;
+
+    // Cast the ptr-ptr back to a POCO JSON Ptr
+    pjs::Object::Ptr jsComp = *((pjs::Object::Ptr *) jsCompPtr);
+
+    if( jsComp->has( "setStatus" ) )
+    {
+        std::string sStat = jsComp->getValue<std::string>( "setStatus" );
+        if( compPtr->getStatusAsStr() != sStat )
+        {
+            compPtr->setStatusFromStr( sStat );
+            changed = true;
+        }
+    }
+
+    if( jsComp->has( "propagatedStatus" ) )
+    {
+        std::string pStat = jsComp->getValue<std::string>( "propagatedStatus" );
+        if( compPtr->getPropagatedStatusAsStr() != pStat )
+        {
+            compPtr->setPropagatedStatusFromStr( pStat );
+            changed = true;
+        }
+    }
+
+    if( jsComp->has( "updateTime" ) )
+    {
+        time_t uTime = jsComp->getValue<long>( "updateTime" );
+        if( compPtr->getLastUpdateTime() != uTime )
+        {
+            compPtr->setUpdateTimestamp( uTime );
+            changed = true;
+        }
+    }
+
+    if( jsComp->has( "errCode" ) )
+    {
+        uint eCode = jsComp->getValue<uint>( "errCode" );
+        if( compPtr->getErrorCode() != eCode )
+        {
+            compPtr->setErrorCode( eCode );
+            changed = true;
+        }
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+HNMDL_RESULT_T
+HNMDARecord::handleHealthComponentChildren( void *jsCompPtr, HNDHComponent *rootComponent, bool &changed )
+{
+    // Start with no change indication
+    changed = false;
+
+    // Cast the ptr-ptr back to a POCO JSON Ptr
+    pjs::Object::Ptr jsComp = *((pjs::Object::Ptr *) jsCompPtr);
+        
+    pjs::Array::Ptr jsChildArr = jsComp->getArray( "children" );        
+
+    // If the component array doesn't have elements, then exit
+    if( jsChildArr->size() == 0 )
+    {
+        return HNMDL_RESULT_SUCCESS;
+    }
+
+    // Enumerate through the components in the array
+    for( uint i = 0; i < jsChildArr->size(); i++ )
+    {
+        // {
+        //   "children": [],
+        //   "errCode": 0,
+        //   "id": "c1",
+        //   "msgStr": "",
+        //   "name": "test device hc1",
+        //   "noteStr": "",
+        //   "propagatedStatus": "OK",
+        //   "setStatus": "OK",
+        //   "updateTime": "Wed Nov 16 12:46:43 2022\n"
+        // },
+        pjs::Object::Ptr jsComp = jsChildArr->getObject( i );
+
+        // Extract component id and name fields
+        if( jsComp->has("id") == false )
+            continue;
+        std::string compID = jsComp->getValue<std::string>( "id" );
+
+        if( jsComp->has("name") == false )
+            continue;
+        std::string compName = jsComp->getValue<std::string>( "name" );
+
+        // Create a temporary component to extract fields into
+        // HNDHComponent *tmpComp = new HNDHComponent( "id, "name" );
+
+        // Extract the component fields
+
+    }
+
+    // Check if we have an existing component structure
+    //if( m_deviceHealth == NULL )
+    //{
+    //    m_deviceHealth = new HNDHComponent;
+    //}
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+#if 0
+HNMDL_RESULT_T
+HNMDARecord::updateHealthInfo( std::istream& bodyStream, bool &changed )
+{
+    // Start off with no change indication
+    changed = false;
+
+    // {
+    //   "deviceCRC32": "535cd1eb",
+    //   "deviceID": "hnode2-test-device-default-535cd1eb",
+    //   "deviceStatus": "OK",
+    //   "enabled": true,
+    //   "rootComponent": 
+    //   {
+    //     "children": [],
+    //     "errCode": 0,
+    //     "id": "c0",
+    //     "msgStr": "",
+    //     "name": "Test Name 5",
+    //     "noteStr": "",
+    //     "propagatedStatus": "OK",
+    //     "setStatus": "UNKNOWN",
+    //     "updateTime": "Thu Nov 24 13:03:10 2022\n"
+    //   }
+    // }
+
+    m_healthCache.updateDeviceHealth( "", bodyStream, changed );
+
+    // Parse the json body of the request
+    try
+    {
+        // Attempt to parse the json    
+        pjs::Parser parser;
+        pdy::Var varRoot = parser.parse( bodyStream );
+
+        // Get a pointer to the root object
+        pjs::Object::Ptr jsRoot = varRoot.extract< pjs::Object::Ptr >();
+
+        // Make sure the health service is enabled, if not exit
+        if( jsRoot->has( "enabled" ) == false )
+        {
+            return HNMDL_RESULT_FAILURE;
+        }
+        
+        bool enableVal = jsRoot->getValue<bool>( "enabled" );
+        if( enableVal != true )
+        {   
+            return HNMDL_RESULT_FAILURE;            
+        }
+
+        // Make sure the deviceCRC32 field exists and matches
+        if( jsRoot->has( "deviceCRC32" ) == false )
+        {
+            return HNMDL_RESULT_FAILURE;
+        }
+        
+        std::string devCRC32ID = jsRoot->getValue<std::string>( "deviceCRC32" );
+        if( devCRC32ID != m_hnodeID.getCRC32AsHexStr() )
+        {   
+            return HNMDL_RESULT_FAILURE;            
+        }
+
+        // Extract the root component.
+        if( jsRoot->has( "rootComponent" ) == false )
+        {
+            return HNMDL_RESULT_FAILURE;
+        }
+
+        // Get a pointer to the root object
+        pjs::Object::Ptr jsRootComp = jsRoot->getObject( "rootComponent" );
+
+        // Extract root component id and name fields
+        if( jsRootComp->has("id") == false )
+        {
+            return HNMDL_RESULT_FAILURE;
+        }
+
+        std::string compID = jsRootComp->getValue<std::string>( "id" );
+        
+        if( m_deviceHealth == NULL )
+        {
+            m_deviceHealth = new HNDHComponent( compID );
+            changed = true;
+        }
+        else if( m_deviceHealth->getID() != compID )
+        {
+            delete m_deviceHealth;
+            m_deviceHealth = new HNDHComponent( compID );
+            changed = true;
+        }
+
+        bool compChange = false;
+        handleHealthComponentUpdate( &jsRootComp, m_deviceHealth, compChange );
+
+        bool childChange = false;
+        handleHealthComponentChildren( &jsRootComp, m_deviceHealth, childChange );
+
+        changed = compChange | childChange;
+    }
+    catch( Poco::Exception ex )
+    {
+        std::cout << "HNMDARecord::updateHealthInfo exception: " << ex.displayText() << std::endl;
+        // Request body was not understood
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+#endif
 
 void 
 HNMDARecord::debugPrint( uint offset )
@@ -1474,7 +1718,12 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                     if( executeDeviceServicesUpdateMapping( it->second ) != HNMDL_RESULT_SUCCESS )
                         setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
                     else
-                        setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );               
+                    {
+                        if( doesDeviceProvideService( it->second.getCRC32ID(), "hnsrv-health-source" ) == true )
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_UPDATE_HEALTH, 0 );
+                        else
+                            setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );
+                    }
                 break;
 
                 // Device is waiting to be claimed 
@@ -1514,6 +1763,13 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                     else
                         setNextMonitorState( it->second, HNMDR_MGMT_STATE_OPT_INFO, 2 );
                 break;
+
+                // Update the cached health information for the device
+                case HNMDR_MGMT_STATE_UPDATE_HEALTH:
+                    updateDeviceHealthInfo( it->second );
+                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 2 );
+                break;
+
             }
         }
     }
@@ -2314,6 +2570,23 @@ HNManagedDeviceArbiter::executeDeviceServicesUpdateMapping( HNMDARecord &device 
     return HNMDL_RESULT_SUCCESS;
 }
 
+bool
+HNManagedDeviceArbiter::doesDeviceProvideService( std::string crc32ID, std::string srvType )
+{
+    std::map< std::string, std::vector< std::string > >::iterator it = m_providerMap.find( srvType );
+
+    if( it == m_providerMap.end() )
+        return false;
+
+    for( std::vector< std::string >::iterator idit = it->second.begin(); idit != it->second.end(); idit++ )
+    {
+        if( *idit == crc32ID )
+            return true;
+    }
+
+    return false;    
+}
+
 void
 HNManagedDeviceArbiter::reportSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList )
 {
@@ -2604,4 +2877,60 @@ void
 HNManagedDeviceArbiter::reportSrvDirectedMappings( std::vector< HNMDServiceAssoc > &assocList )
 {
     assocList.clear();
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::updateDeviceHealthInfo( HNMDARecord &device )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+
+    std::cout << "updateDeviceHealthInfo - entry" << std::endl;
+
+    device.lockForUpdate();
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        device.unlockForUpdate();
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.unlockForUpdate();
+
+    std::cout << "updateDeviceHealthInfo - 1" << std::endl;
+
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/health" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_GET, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    session.sendRequest( request );
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << "updateDeviceHealthInfo: " << response.getStatus() << " " << response.getReason() << " " << response.getContentLength() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.lockForUpdate();
+
+    // Track any updates
+    bool changed = false;
+    m_healthCache.updateDeviceHealth( device.getCRC32ID(), rs, changed );
+
+    //device.updateHealthInfo( rs, changed );
+
+    device.unlockForUpdate();
+
+    if( changed == true )
+    {
+        std::cout << "Device values changed." << std::endl;
+    }
+
+    return HNMDL_RESULT_SUCCESS;
 }

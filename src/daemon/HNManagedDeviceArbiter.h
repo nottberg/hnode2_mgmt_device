@@ -7,6 +7,7 @@
 
 #include <hnode2/HNodeDevice.h>
 #include <hnode2/HNodeID.h>
+#include <hnode2/HNDeviceHealth.h>
 
 // Forward declaration for friend class below
 class HNMDARunner;
@@ -160,7 +161,8 @@ typedef enum HNManagedDeviceRecordManagementStateEnum
     HNMDR_MGMT_STATE_ACTIVE,           // Device is active, responding to period health checks  
     HNMDR_MGMT_STATE_DISAPPEARING,     // Avahi notification that device is offline
     HNMDR_MGMT_STATE_OFFLINE,          // Recent attempts to contact device have been unsuccessful
-    HNMDR_MGMT_STATE_EXEC_CMD          // Execute a command to the device
+    HNMDR_MGMT_STATE_EXEC_CMD,         // Execute a command to the device
+    HNMDR_MGMT_STATE_UPDATE_HEALTH     // Update the cached health information for the device
 }HNMDR_MGMT_STATE_T;
 
 typedef enum HNManagedDeviceRecordOwnerStateEnum
@@ -215,8 +217,15 @@ class HNMDARecord
         // the device desires to use.
         //HNMDR_DSERV_T m_desiredServiceFlags;
 
+        // The root component for device health.
+        //HNDHComponent *m_deviceHealth;
+
         // A mutex for guarding record modifications.
         std::mutex *m_deviceMutex;
+
+        HNMDL_RESULT_T handleHealthComponentStrInstanceUpdate( void *jsSIPtr, HNFSInstance *strInstPtr, bool &changed );
+        HNMDL_RESULT_T handleHealthComponentUpdate( void *jsCompPtr, HNDHComponent *compPtr, bool &changed );
+        HNMDL_RESULT_T handleHealthComponentChildren( void *jsArrPtr, HNDHComponent *rootComponent, bool &changed );
 
     public:
         HNMDARecord();
@@ -282,6 +291,8 @@ class HNMDARecord
         HNMDMgmtCmd& getDeviceMgmtCmdRef();
 
         std::string getServiceProviderURI( std::string srvType );
+
+        //HNMDL_RESULT_T updateHealthInfo( std::istream& bodyStream, bool &changed );
 
         void debugPrint( uint offset );
 };
@@ -396,6 +407,12 @@ class HNManagedDeviceArbiter
         // Map service desired to service provider
         std::map< HNMDSrvRef, HNMDSrvRef > m_directedMappings;
 
+        // A cache of format strings
+        HNFormatStringCache m_formatStrCache;
+
+        // A cache of health data for devices
+        HNHealthCache m_healthCache;
+
         // The thread helper
         void *thelp;
 
@@ -416,6 +433,8 @@ class HNManagedDeviceArbiter
         HNMDL_RESULT_T executeDeviceServicesUpdateMapping( HNMDARecord &device );
 
         HNMDL_RESULT_T executeDeviceMgmtCmd( HNMDARecord &device );
+
+        HNMDL_RESULT_T updateDeviceHealthInfo( HNMDARecord &device );
 
         std::string getDeviceServiceProviderURI( std::string devCRC32ID, std::string srvType );
 
@@ -452,6 +471,8 @@ class HNManagedDeviceArbiter
         HNMDL_RESULT_T setDeviceMgmtCmdFromJSON( std::string crc32ID, std::istream *bodyStream );
 
         HNMDL_RESULT_T startDeviceMgmtCmd( std::string crc32ID );
+
+        bool doesDeviceProvideService( std::string crc32ID, std::string srvType );
 
         void reportSrvProviderInfoList( std::vector< HNMDServiceInfo > &srvList );
         void reportSrvMappingInfoList( std::vector< HNMDServiceInfo > &srvList );
