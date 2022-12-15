@@ -1767,7 +1767,9 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                 // Update the cached health information for the device
                 case HNMDR_MGMT_STATE_UPDATE_HEALTH:
                     updateDeviceHealthInfo( it->second );
-                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 2 );
+                    m_healthCache.debugPrintHealthReport();
+                    //setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 2 );
+                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_UPDATE_HEALTH, 10 );
                 break;
 
             }
