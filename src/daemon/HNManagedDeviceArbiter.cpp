@@ -1375,6 +1375,8 @@ HNManagedDeviceArbiter::HNManagedDeviceArbiter()
     thelp = NULL;
 
     m_mgmtDevice = NULL;
+
+    m_healthCache.setFormatStringCache( &m_formatStrCache );
 }
 
 HNManagedDeviceArbiter::~HNManagedDeviceArbiter()
@@ -1766,8 +1768,10 @@ HNManagedDeviceArbiter::runMonitoringLoop()
 
                 // Update the cached health information for the device
                 case HNMDR_MGMT_STATE_UPDATE_HEALTH:
-                    updateDeviceHealthInfo( it->second );
-                    m_healthCache.debugPrintHealthReport();
+                    bool changed = false;
+                    updateDeviceHealthInfo( it->second, changed );
+                    if( changed == true )
+                        m_healthCache.debugPrintHealthReport();
                     //setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 2 );
                     setNextMonitorState( it->second, HNMDR_MGMT_STATE_UPDATE_HEALTH, 10 );
                 break;
@@ -1963,32 +1967,6 @@ HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
             }
         }
 
-#if 0
-        if( jsRoot->has( "desiredServices" ) )
-        {
-            uint newDServFlags = HNMDR_DSERV_NOTSET;
-            pjs::Array::Ptr jsSvcList = jsRoot->getArray( "desiredServices" );
-
-            for( uint index = 0; index < jsSvcList->size(); index++ )
-            {
-                std::string value = jsSvcList->getElement<std::string>( index );
-                std::cout << "Device Info - DServ: " << value << std::endl;
-                if( "health" == value )
-                    newDServFlags |= HNMDR_DSERV_HEALTH;
-                else if( "event" == value )
-                    newDServFlags |= HNMDR_DSERV_EVENT;
-                else if( "logging" == value )
-                    newDServFlags |= HNMDR_DSERV_LOGGING;
-                else if( "data" == value )
-                    newDServFlags |= HNMDR_DSERV_DATA;
-                else if( "key-value" == value )
-                    newDServFlags |= HNMDR_DSERV_KEYVALUE;
-            }
-            
-            device.setDesiredServices( (HNMDR_DSERV_T) newDServFlags );
-        }
-#endif
-
         device.unlockForUpdate();
     }
     catch( Poco::Exception ex )
@@ -2002,7 +1980,11 @@ HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
 
     if( changed == true )
     {
-        std::cout << "Device values changed." << std::endl;
+        std::cout << "Device OpInfo values changed: " << device.getName() << " (" << device.getCRC32ID() << ")" << std::endl;
+    }
+    else
+    {
+        std::cout << "Device OpInfo values did not change: " << device.getName() << " (" << device.getCRC32ID() << ")" << std::endl;
     }
 
     return HNMDL_RESULT_SUCCESS;
@@ -2882,7 +2864,7 @@ HNManagedDeviceArbiter::reportSrvDirectedMappings( std::vector< HNMDServiceAssoc
 }
 
 HNMDL_RESULT_T
-HNManagedDeviceArbiter::updateDeviceHealthInfo( HNMDARecord &device )
+HNManagedDeviceArbiter::updateDeviceHealthInfo( HNMDARecord &device, bool &changed )
 {
     Poco::URI uri;
     HNMDARAddress dcInfo;
@@ -2922,16 +2904,17 @@ HNManagedDeviceArbiter::updateDeviceHealthInfo( HNMDARecord &device )
     device.lockForUpdate();
 
     // Track any updates
-    bool changed = false;
     m_healthCache.updateDeviceHealth( device.getCRC32ID(), rs, changed );
-
-    //device.updateHealthInfo( rs, changed );
 
     device.unlockForUpdate();
 
     if( changed == true )
     {
-        std::cout << "Device values changed." << std::endl;
+        std::cout << "Health Cache - Health status changed: \"" << device.getName() << "\" (" << device.getCRC32ID() << ")" << std::endl;
+    }
+    else
+    {
+        std::cout << "Health Cache - Health status did NOT change: \"" << device.getName() << "\" (" << device.getCRC32ID() << ")" << std::endl;
     }
 
     return HNMDL_RESULT_SUCCESS;

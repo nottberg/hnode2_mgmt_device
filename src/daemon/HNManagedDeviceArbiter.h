@@ -434,7 +434,7 @@ class HNManagedDeviceArbiter
 
         HNMDL_RESULT_T executeDeviceMgmtCmd( HNMDARecord &device );
 
-        HNMDL_RESULT_T updateDeviceHealthInfo( HNMDARecord &device );
+        HNMDL_RESULT_T updateDeviceHealthInfo( HNMDARecord &device, bool &changed );
 
         std::string getDeviceServiceProviderURI( std::string devCRC32ID, std::string srvType );
 
