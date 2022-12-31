@@ -162,7 +162,8 @@ typedef enum HNManagedDeviceRecordManagementStateEnum
     HNMDR_MGMT_STATE_DISAPPEARING,     // Avahi notification that device is offline
     HNMDR_MGMT_STATE_OFFLINE,          // Recent attempts to contact device have been unsuccessful
     HNMDR_MGMT_STATE_EXEC_CMD,         // Execute a command to the device
-    HNMDR_MGMT_STATE_UPDATE_HEALTH     // Update the cached health information for the device
+    HNMDR_MGMT_STATE_UPDATE_HEALTH,    // Update the cached health information for the device
+    HNMDR_MGMT_STATE_UPDATE_STRREF     // Retrieve referenced string into the local cache
 }HNMDR_MGMT_STATE_T;
 
 typedef enum HNManagedDeviceRecordOwnerStateEnum
@@ -278,7 +279,8 @@ class HNMDARecord
         std::string getHNodeIDStr();
         std::string getInstance();
         std::string getName();
-        std::string getCRC32ID();
+        uint32_t getCRC32ID();
+        std::string getCRC32IDStr();
 
         void getAddressList( std::vector< HNMDARAddress > &addrList );
 
@@ -435,6 +437,7 @@ class HNManagedDeviceArbiter
         HNMDL_RESULT_T executeDeviceMgmtCmd( HNMDARecord &device );
 
         HNMDL_RESULT_T updateDeviceHealthInfo( HNMDARecord &device, bool &changed );
+        HNMDL_RESULT_T updateDeviceStringReferences( HNMDARecord &device, bool &changed );
 
         std::string getDeviceServiceProviderURI( std::string devCRC32ID, std::string srvType );
 

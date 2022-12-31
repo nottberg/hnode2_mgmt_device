@@ -524,6 +524,8 @@ HNMDARecord::getManagementStateStr()
         return "NOT_AVAILABLE";
     else if( HNMDR_MGMT_STATE_UPDATE_HEALTH == m_mgmtState )
         return "UPDATE_HEALTH";
+    else if( HNMDR_MGMT_STATE_UPDATE_STRREF == m_mgmtState )
+        return "UPDATE_STRREF";
     else if( HNMDR_MGMT_STATE_NOTSET == m_mgmtState )
         return "NOTSET";
 
@@ -670,8 +672,14 @@ HNMDARecord::getName()
     return m_name;
 }
 
-std::string 
+uint32_t
 HNMDARecord::getCRC32ID()
+{
+    return m_hnodeID.getCRC32();
+}
+
+std::string 
+HNMDARecord::getCRC32IDStr()
 {
     return m_hnodeID.getCRC32AsHexStr();
 }
@@ -1433,14 +1441,14 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
     // Check if the record is existing, or if this is a new discovery.
-    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( record.getCRC32ID() );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( record.getCRC32IDStr() );
 
     if( it == m_deviceMap.end() )
     {
         // This is a new record
-        if( record.getCRC32ID() == getSelfCRC32IDStr() )
+        if( record.getCRC32IDStr() == getSelfCRC32IDStr() )
         {
-            std::cout << "Management Node Device adding inbuilt services - crc32id: " << record.getCRC32ID() << std::endl;
+            std::cout << "Management Node Device adding inbuilt services - crc32id: " << record.getCRC32IDStr() << std::endl;
 
             initMgmtDevice( record );
 
@@ -1449,7 +1457,7 @@ HNManagedDeviceArbiter::notifyDiscoverAdd( HNMDARecord &record )
         else
             record.setManagementState( HNMDR_MGMT_STATE_DISCOVERED );
 
-        m_deviceMap.insert( std::pair< std::string, HNMDARecord >( record.getCRC32ID(), record ) );
+        m_deviceMap.insert( std::pair< std::string, HNMDARecord >( record.getCRC32IDStr(), record ) );
 
         std::cout << "================================" << std::endl;
         std::map< std::string, HNMDARecord >::iterator dit;
@@ -1475,7 +1483,7 @@ HNManagedDeviceArbiter::notifyDiscoverRemove( HNMDARecord &record )
     std::lock_guard<std::mutex> guard( m_mapMutex );
 
     // Check if the record is existing, or if this is a new discovery.
-    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( record.getCRC32ID() );
+    std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.find( record.getCRC32IDStr() );
 
     if( it != m_deviceMap.end() )
     {
@@ -1636,7 +1644,7 @@ HNManagedDeviceArbiter::runMonitoringLoop()
         // Walk through known devices and take any pending actions
         for( std::map< std::string, HNMDARecord >::iterator it = m_deviceMap.begin(); it != m_deviceMap.end(); it++ )
         {
-            std::cout << "  Device - crc32: " << it->second.getCRC32ID() << "  type: " << it->second.getDeviceType() << "   state: " <<  it->second.getManagementStateStr() << "  ostate: " << it->second.getOwnershipStateStr() << std::endl;
+            std::cout << "  Device - crc32: " << it->second.getCRC32IDStr() << "  type: " << it->second.getDeviceType() << "   state: " <<  it->second.getManagementStateStr() << "  ostate: " << it->second.getOwnershipStateStr() << std::endl;
 
             switch( it->second.getManagementState() )
             {
@@ -1721,7 +1729,7 @@ HNManagedDeviceArbiter::runMonitoringLoop()
                         setNextMonitorState( it->second, HNMDR_MGMT_STATE_OFFLINE, 10 );
                     else
                     {
-                        if( doesDeviceProvideService( it->second.getCRC32ID(), "hnsrv-health-source" ) == true )
+                        if( doesDeviceProvideService( it->second.getCRC32IDStr(), "hnsrv-health-source" ) == true )
                             setNextMonitorState( it->second, HNMDR_MGMT_STATE_UPDATE_HEALTH, 0 );
                         else
                             setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 10 );
@@ -1768,12 +1776,26 @@ HNManagedDeviceArbiter::runMonitoringLoop()
 
                 // Update the cached health information for the device
                 case HNMDR_MGMT_STATE_UPDATE_HEALTH:
+                {
                     bool changed = false;
                     updateDeviceHealthInfo( it->second, changed );
                     if( changed == true )
                         m_healthCache.debugPrintHealthReport();
                     //setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 2 );
+                    setNextMonitorState( it->second, HNMDR_MGMT_STATE_UPDATE_STRREF, 10 );
+                }
+                break;
+
+                // Update referenced string information from a device.
+                case HNMDR_MGMT_STATE_UPDATE_STRREF:
+                {
+                    bool changed = false;
+                    updateDeviceStringReferences( it->second, changed );
+                    if( changed == true )
+                        m_healthCache.debugPrintHealthReport();
+                    //setNextMonitorState( it->second, HNMDR_MGMT_STATE_ACTIVE, 2 );
                     setNextMonitorState( it->second, HNMDR_MGMT_STATE_UPDATE_HEALTH, 10 );
+                }
                 break;
 
             }
@@ -1980,11 +2002,11 @@ HNManagedDeviceArbiter::updateDeviceOperationalInfo( HNMDARecord &device )
 
     if( changed == true )
     {
-        std::cout << "Device OpInfo values changed: " << device.getName() << " (" << device.getCRC32ID() << ")" << std::endl;
+        std::cout << "Device OpInfo values changed: " << device.getName() << " (" << device.getCRC32IDStr() << ")" << std::endl;
     }
     else
     {
-        std::cout << "Device OpInfo values did not change: " << device.getName() << " (" << device.getCRC32ID() << ")" << std::endl;
+        std::cout << "Device OpInfo values did not change: " << device.getName() << " (" << device.getCRC32IDStr() << ")" << std::endl;
     }
 
     return HNMDL_RESULT_SUCCESS;
@@ -2383,7 +2405,7 @@ HNManagedDeviceArbiter::rebuildSrvProviderMap()
         // Get a list of provided endpoint type strings
         std::vector< std::string > srvTypes;
 
-        std::cout << "rebuildSrvProviderMap - device: " << it->second.getCRC32ID() << std::endl;
+        std::cout << "rebuildSrvProviderMap - device: " << it->second.getCRC32IDStr() << std::endl;
 
         it->second.getSrvProviderTSList( srvTypes );
 
@@ -2400,13 +2422,13 @@ HNManagedDeviceArbiter::rebuildSrvProviderMap()
             if( mit != m_providerMap.end() )
             {
                 std::cout << "rebuildSrvProviderMap - add-new" << std::endl;
-                mit->second.push_back( it->second.getCRC32ID() );
+                mit->second.push_back( it->second.getCRC32IDStr() );
             }
             else
             {
                 std::cout << "rebuildSrvProviderMap - add-tail" << std::endl;
                 std::vector< std::string > tmpList;
-                tmpList.push_back( it->second.getCRC32ID() );
+                tmpList.push_back( it->second.getCRC32IDStr() );
                 m_providerMap.insert( std::pair< std::string, std::vector< std::string > >( *sit, tmpList ) );
             }
         }    
@@ -2441,7 +2463,7 @@ HNManagedDeviceArbiter::executeDeviceServicesUpdateMapping( HNMDARecord &device 
     device.lockForUpdate();
 
     // Get a list of desired services
-    std::cout << "executeDeviceServicesUpdateMapping - device: " << device.getCRC32ID() << std::endl;
+    std::cout << "executeDeviceServicesUpdateMapping - device: " << device.getCRC32IDStr() << std::endl;
 
     device.getSrvMappingTSList( srvTypes );
 
@@ -2594,7 +2616,7 @@ HNManagedDeviceArbiter::reportSrvProviderInfoList( std::vector< HNMDServiceInfo 
             HNMDServiceDevRef devRef;
 
             devRef.setDevName( dit->second.getName() );
-            devRef.setDevCRC32ID( dit->second.getCRC32ID() );
+            devRef.setDevCRC32ID( dit->second.getCRC32IDStr() );
 
             srvList.back().getDeviceListRef().push_back( devRef );
         }
@@ -2753,7 +2775,7 @@ HNManagedDeviceArbiter::rebuildSrvMappings()
         // Get a list of provided endpoint type strings
         std::vector< std::string > srvTypes;
 
-        std::cout << "rebuildSrvMapping - device: " << it->second.getCRC32ID() << std::endl;
+        std::cout << "rebuildSrvMapping - device: " << it->second.getCRC32IDStr() << std::endl;
 
         it->second.getSrvMappingTSList( srvTypes );
 
@@ -2770,13 +2792,13 @@ HNManagedDeviceArbiter::rebuildSrvMappings()
             if( mit != m_servicesMap.end() )
             {
                 std::cout << "rebuildSrvMapping - add-new" << std::endl;
-                mit->second.push_back( it->second.getCRC32ID() );
+                mit->second.push_back( it->second.getCRC32IDStr() );
             }
             else
             {
                 std::cout << "rebuildSrvMapping - add-tail" << std::endl;
                 std::vector< std::string > tmpList;
-                tmpList.push_back( it->second.getCRC32ID() );
+                tmpList.push_back( it->second.getCRC32IDStr() );
                 m_servicesMap.insert( std::pair< std::string, std::vector< std::string > >( *sit, tmpList ) );
             }
         }    
@@ -2810,7 +2832,7 @@ HNManagedDeviceArbiter::reportSrvMappingInfoList( std::vector< HNMDServiceInfo >
             HNMDServiceDevRef devRef;
 
             devRef.setDevName( dit->second.getName() );
-            devRef.setDevCRC32ID( dit->second.getCRC32ID() );
+            devRef.setDevCRC32ID( dit->second.getCRC32IDStr() );
 
             srvList.back().getDeviceListRef().push_back( devRef );
         }
@@ -2849,7 +2871,7 @@ HNManagedDeviceArbiter::reportSrvDefaultMappings( std::vector< HNMDServiceAssoc 
             HNMDServiceDevRef devRef;
 
             devRef.setDevName( dit->second.getName() );
-            devRef.setDevCRC32ID( dit->second.getCRC32ID() );
+            devRef.setDevCRC32ID( dit->second.getCRC32IDStr() );
 
             srvList.back().getDeviceListRef().push_back( devRef );
         }
@@ -2910,11 +2932,100 @@ HNManagedDeviceArbiter::updateDeviceHealthInfo( HNMDARecord &device, bool &chang
 
     if( changed == true )
     {
-        std::cout << "Health Cache - Health status changed: \"" << device.getName() << "\" (" << device.getCRC32ID() << ")" << std::endl;
+        std::cout << "Health Cache - Health status changed: \"" << device.getName() << "\" (" << device.getCRC32IDStr() << ")" << std::endl;
     }
     else
     {
-        std::cout << "Health Cache - Health status did NOT change: \"" << device.getName() << "\" (" << device.getCRC32ID() << ")" << std::endl;
+        std::cout << "Health Cache - Health status did NOT change: \"" << device.getName() << "\" (" << device.getCRC32IDStr() << ")" << std::endl;
+        m_healthCache.debugPrintHealthReport();
+    }
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+HNMDL_RESULT_T
+HNManagedDeviceArbiter::updateDeviceStringReferences( HNMDARecord &device, bool &changed )
+{
+    Poco::URI uri;
+    HNMDARAddress dcInfo;
+
+    std::cout << "updateDeviceStringReferences - entry" << std::endl;
+
+    device.lockForUpdate();
+
+    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    {
+        device.unlockForUpdate();
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    std::cout << "updateDeviceStringReferences - 1" << std::endl;
+
+    // Build the outbound request json
+    pjs::Object jsRoot;
+    pjs::Array  jsStrRefs;
+
+    std::vector< std::string > formatCodeList;
+    m_formatStrCache.getUncachedStrRefList( device.getCRC32ID(), formatCodeList );
+
+    for( std::vector< std::string >::iterator srit = formatCodeList.begin(); srit != formatCodeList.end(); srit++ )
+    {
+        pjs::Object jsStrRef;
+        jsStrRef.set( "fmtCode", *srit );
+
+        jsStrRefs.add( jsStrRef );
+    }
+
+    jsRoot.set( "devCRC32ID", device.getCRC32IDStr() );
+    jsRoot.set( "strRefs", jsStrRefs );
+
+    // Release the device while network transaction runs.
+    device.unlockForUpdate();
+
+    // Build the http request
+    uri.setScheme( "http" );
+    uri.setHost( dcInfo.getAddress() );
+    uri.setPort( dcInfo.getPort() );
+    uri.setPath( "/hnode2/device/string-source/format-strings" );
+
+    pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
+    pns::HTTPRequest request( pns::HTTPRequest::HTTP_PUT, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
+    pns::HTTPResponse response;
+
+    // Start request
+    std::ostream& os = session.sendRequest( request );
+
+    // Render json request string to http payload.
+    try {
+        pjs::Stringifier::stringify( jsRoot, std::cout );
+        pjs::Stringifier::stringify( jsRoot, os );
+    } catch( Poco::Exception& ex ) {
+        std::cerr << ex.displayText() << std::endl;
+    }    
+
+    // Wait for response data
+    std::istream& rs = session.receiveResponse( response );
+    std::cout << "updateDeviceStringReferences: " << response.getStatus() << " " << response.getReason() << " " << response.getContentLength() << std::endl;
+
+    if( response.getStatus() != Poco::Net::HTTPResponse::HTTP_OK )
+    {
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    device.lockForUpdate();
+
+    // Track any updates
+    m_formatStrCache.updateStringDefinitions( device.getCRC32IDStr(), rs, changed );
+
+    device.unlockForUpdate();
+
+    if( changed == true )
+    {
+        std::cout << "String Cache - String Cache contents changed: \"" << device.getName() << "\" (" << device.getCRC32IDStr() << ")" << std::endl;
+    }
+    else
+    {
+        std::cout << "String Cache - String Cache contents did NOT change: \"" << device.getName() << "\" (" << device.getCRC32IDStr() << ")" << std::endl;
     }
 
     return HNMDL_RESULT_SUCCESS;
