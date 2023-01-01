@@ -294,7 +294,7 @@ class HNMDARecord
 
         std::string getServiceProviderURI( std::string srvType );
 
-        //HNMDL_RESULT_T updateHealthInfo( std::istream& bodyStream, bool &changed );
+        HNMDL_RESULT_T getServiceProviderURIWithExtendedPath( std::string srvType, std::string pathExt, std::string &uriStr );
 
         void debugPrint( uint offset );
 };

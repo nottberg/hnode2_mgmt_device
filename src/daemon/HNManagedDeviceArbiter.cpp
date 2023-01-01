@@ -942,6 +942,31 @@ HNMDARecord::getServiceProviderURI( std::string srvType )
 }
 
 HNMDL_RESULT_T
+HNMDARecord::getServiceProviderURIWithExtendedPath( std::string srvType, std::string pathExt, std::string &uriStr )
+{
+    Poco::URI uri;
+
+    uriStr.clear();
+
+    // Get the service provider base uri.
+    try {
+        uri = getServiceProviderURI( srvType );
+    } catch ( Poco::Exception& ex ) {
+        std::cout << "getServiceProviderURIWithExtendedPath - bad service uri: " << ex.displayText() << std::endl;
+        return HNMDL_RESULT_FAILURE;
+    }
+
+    // Add the request specific path to the uri
+    if( pathExt.empty() == false )
+        uri.setPath( uri.getPath() + pathExt );
+
+    // Convert it to a string
+    uriStr = uri.toString();
+
+    return HNMDL_RESULT_SUCCESS;
+}
+
+HNMDL_RESULT_T
 HNMDARecord::handleHealthComponentStrInstanceUpdate( void *jsSIPtr, HNFSInstance *strInstPtr, bool &changed )
 {
     // Start off with no change indication
@@ -2889,27 +2914,29 @@ HNMDL_RESULT_T
 HNManagedDeviceArbiter::updateDeviceHealthInfo( HNMDARecord &device, bool &changed )
 {
     Poco::URI uri;
-    HNMDARAddress dcInfo;
 
     std::cout << "updateDeviceHealthInfo - entry" << std::endl;
 
     device.lockForUpdate();
 
-    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    // Get the service provider base uri.
+    std::string uriStr;
+    if( device.getServiceProviderURIWithExtendedPath( "hnsrv-health-source", "", uriStr ) != HNMDL_RESULT_SUCCESS )
     {
+        std::cout << "updateDeviceHealthInfo - uri failure" << std::endl;
         device.unlockForUpdate();
         return HNMDL_RESULT_FAILURE;
     }
+
+    // Put it into a uri data structure
+    uri = uriStr;
+    std::cout << "updateDeviceHealthInfo - uri: " << uri.toString() << std::endl;
 
     device.unlockForUpdate();
 
     std::cout << "updateDeviceHealthInfo - 1" << std::endl;
 
-    uri.setScheme( "http" );
-    uri.setHost( dcInfo.getAddress() );
-    uri.setPort( dcInfo.getPort() );
-    uri.setPath( "/hnode2/device/health" );
-
+    // Build HTTP request
     pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
     pns::HTTPRequest request( pns::HTTPRequest::HTTP_GET, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
     pns::HTTPResponse response;
@@ -2947,19 +2974,23 @@ HNMDL_RESULT_T
 HNManagedDeviceArbiter::updateDeviceStringReferences( HNMDARecord &device, bool &changed )
 {
     Poco::URI uri;
-    HNMDARAddress dcInfo;
 
     std::cout << "updateDeviceStringReferences - entry" << std::endl;
 
     device.lockForUpdate();
 
-    if( device.findPreferredConnection( HMDAR_ADDRTYPE_IPV4, dcInfo ) != HNMDL_RESULT_SUCCESS )
+    // Get the service provider base uri.
+    std::string uriStr;
+    if( device.getServiceProviderURIWithExtendedPath( "hnsrv-string-source", "/format-strings", uriStr ) != HNMDL_RESULT_SUCCESS )
     {
+        std::cout << "updateDeviceStringReferences - uri failure" << std::endl;
         device.unlockForUpdate();
         return HNMDL_RESULT_FAILURE;
     }
 
-    std::cout << "updateDeviceStringReferences - 1" << std::endl;
+    // Put it into a uri data structure
+    uri = uriStr;
+    std::cout << "updateDeviceStringReferences - uri: " << uri.toString() << std::endl;
 
     // Build the outbound request json
     pjs::Object jsRoot;
@@ -2982,12 +3013,7 @@ HNManagedDeviceArbiter::updateDeviceStringReferences( HNMDARecord &device, bool 
     // Release the device while network transaction runs.
     device.unlockForUpdate();
 
-    // Build the http request
-    uri.setScheme( "http" );
-    uri.setHost( dcInfo.getAddress() );
-    uri.setPort( dcInfo.getPort() );
-    uri.setPath( "/hnode2/device/string-source/format-strings" );
-
+    // Build the HTTP request
     pns::HTTPClientSession session( uri.getHost(), uri.getPort() );
     pns::HTTPRequest request( pns::HTTPRequest::HTTP_PUT, uri.getPathAndQuery(), pns::HTTPMessage::HTTP_1_1 );
     pns::HTTPResponse response;
@@ -2997,7 +3023,6 @@ HNManagedDeviceArbiter::updateDeviceStringReferences( HNMDARecord &device, bool 
 
     // Render json request string to http payload.
     try {
-        pjs::Stringifier::stringify( jsRoot, std::cout );
         pjs::Stringifier::stringify( jsRoot, os );
     } catch( Poco::Exception& ex ) {
         std::cerr << ex.displayText() << std::endl;
