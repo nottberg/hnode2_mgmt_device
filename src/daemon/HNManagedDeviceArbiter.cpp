@@ -2910,6 +2910,12 @@ HNManagedDeviceArbiter::reportSrvDirectedMappings( std::vector< HNMDServiceAssoc
     assocList.clear();
 }
 
+void
+HNManagedDeviceArbiter::generateAllDeviceHealthReportAsJSON( std::ostream &bodyStream )
+{
+    m_healthCache.generateAllDeviceHealthReportAsJSON( bodyStream );
+}
+
 HNMDL_RESULT_T
 HNManagedDeviceArbiter::updateDeviceHealthInfo( HNMDARecord &device, bool &changed )
 {

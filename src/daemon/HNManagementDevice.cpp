@@ -1182,6 +1182,108 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
         reqRR->getRspMsg().setReason("OK");
         return;      
     }
+    else if( "getClusterHealth" == opID )
+    {
+        std::ostream &msg = reqRR->getRspMsg().useLocalContentSource();
+
+        m_arbiter.generateAllDeviceHealthReportAsJSON( msg );
+
+        /*
+        pjs::Object jsProviderSet;
+        pjs::Object jsMappingSet;
+        pjs::Object jsDefaultSet;
+        pjs::Array  jsDirectedArray;
+
+        std::vector< HNMDServiceInfo > srvInfoList;
+        m_arbiter.reportSrvProviderInfoList( srvInfoList );
+
+        for( std::vector< HNMDServiceInfo >::iterator sit = srvInfoList.begin(); sit != srvInfoList.end(); sit++ )
+        {
+            pjs::Object jsProvider;
+            pjs::Array  jsProviderArray;
+
+            for( std::vector< HNMDServiceDevRef >::iterator pit = sit->getDeviceListRef().begin(); pit != sit->getDeviceListRef().end(); pit++ )
+            {
+                jsProvider.set( "name", pit->getDevName() );
+                jsProvider.set( "devCRC32ID", pit->getDevCRC32ID() );
+              
+                jsProviderArray.add( jsProvider );
+            }
+
+            jsProviderSet.set( sit->getSrvType(), jsProviderArray );
+        }
+
+        m_arbiter.reportSrvMappingInfoList( srvInfoList );
+
+        for( std::vector< HNMDServiceInfo >::iterator sit = srvInfoList.begin(); sit != srvInfoList.end(); sit++ )
+        {
+            pjs::Object jsProvider;
+            pjs::Array  jsProviderArray;
+
+            for( std::vector< HNMDServiceDevRef >::iterator pit = sit->getDeviceListRef().begin(); pit != sit->getDeviceListRef().end(); pit++ )
+            {
+                jsProvider.set( "name", pit->getDevName() );
+                jsProvider.set( "devCRC32ID", pit->getDevCRC32ID() );
+              
+                jsProviderArray.add( jsProvider );
+            }
+
+            jsMappingSet.set( sit->getSrvType(), jsProviderArray );
+        }
+
+        std::vector< HNMDServiceAssoc > assocList;
+        m_arbiter.reportSrvDefaultMappings( assocList );
+
+        for( std::vector< HNMDServiceAssoc >::iterator sit = assocList.begin(); sit != assocList.end(); sit++ )
+        {
+            pjs::Object jsAssoc;
+
+            if( sit->getType() != HNMDSA_TYPE_DEFAULT )
+              continue;
+
+            jsAssoc.set( "providerCRC32ID", sit->getProviderCRC32ID() );
+              
+            jsDefaultSet.set( sit->getSrvType(), jsAssoc );
+        }        
+
+        m_arbiter.reportSrvDirectedMappings( assocList );
+
+        for( std::vector< HNMDServiceAssoc >::iterator sit = assocList.begin(); sit != assocList.end(); sit++ )
+        {
+            pjs::Object jsAssoc;
+
+            if( sit->getType() != HNMDSA_TYPE_DIRECTED )
+              continue;
+
+            jsAssoc.set( "srvType", sit->getSrvType() );
+            jsAssoc.set( "desirerCRC32ID", sit->getDesirerCRC32ID() );
+            jsAssoc.set( "providerCRC32ID", sit->getProviderCRC32ID() );
+              
+            jsDirectedArray.add( jsAssoc );
+        }        
+
+        // Report the provided, desired, default mappings, and directed mappings
+        jsRoot.set( "providerSet", jsProviderSet );
+        jsRoot.set( "mappingSet", jsMappingSet );
+        jsRoot.set( "defaultMappings", jsDefaultSet );
+        jsRoot.set( "directedMappings", jsDirectedArray );
+        */
+       
+        // Render into a json string.
+        //try {
+        //    pjs::Stringifier::stringify( jsRoot, msg );
+        //} catch( ... ) {
+            // Send back not implemented
+        //    reqRR->getRspMsg().configAsInternalServerError();
+        //    return;
+        //}
+
+        reqRR->getRspMsg().finalizeLocalContent();
+        reqRR->getRspMsg().setContentType("application/json");
+        reqRR->getRspMsg().setStatusCode(200);
+        reqRR->getRspMsg().setReason("OK");
+        return;      
+    }
 
     // Send back not implemented
     reqRR->getRspMsg().configAsNotFound();
@@ -1402,7 +1504,28 @@ const std::string g_HNode2ProxyMgmtAPI = R"(
             }
           }
         }
-      }              
+      },
+      "/hnode2/mgmt/cluster-health": {
+        "get": {
+          "summary": "Get health data for the devices in the cluster.",
+          "operationId": "getClusterHealth",
+          "responses": {
+            "200": {
+              "description": "successful operation",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Invalid status value"
+            }
+          }
+        }
+      }                                  
   }
 }
 )";

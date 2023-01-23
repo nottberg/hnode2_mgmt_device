@@ -482,6 +482,8 @@ class HNManagedDeviceArbiter
         void reportSrvDefaultMappings( std::vector< HNMDServiceAssoc > &assocList );
         void reportSrvDirectedMappings( std::vector< HNMDServiceAssoc > &assocList );
 
+        void generateAllDeviceHealthReportAsJSON( std::ostream &bodyStream );
+
         void debugPrint();
 
     friend HNMDARunner;
