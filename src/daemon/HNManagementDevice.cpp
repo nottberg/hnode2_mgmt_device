@@ -925,6 +925,7 @@ HNManagementDevice::handleLocalSCGIRequest( HNSCGIRR *reqRR, HNOperationData *op
             jsDevice.set( "deviceVersion", dit->getDeviceVersion() );
             jsDevice.set( "discID", dit->getDiscoveryID() );
             jsDevice.set( "crc32ID", dit->getCRC32ID() );
+            jsDevice.set( "hexID", dit->getCRC32IDStr() );
             jsDevice.set( "mgmtState", dit->getManagementStateStr() );
             std::vector< HNMDARAddress > addrList;
             dit->getAddressList( addrList );
